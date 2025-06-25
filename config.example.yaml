@@ -1,0 +1,31 @@
+# Example configuration for sc-agent
+
+# The base URL for the backend resource manager (where public keys and notifications are sent)
+backend_url: "http://localhost:8081/api/v1/"
+
+# The port the agent listens on for notifications
+listen_port: 60500
+
+# Log level: one of [debug, info, warn, error]
+log_level: info
+
+# Path to the log file (leave empty for stdout)
+log_file: ""
+
+# Timeout (in seconds) for HTTP requests to the backend
+backend_timeout: 10
+
+# Directory for storing temporary files (if needed)
+tmp_dir: "/tmp/sc-agent"
+
+# User to install SSH keys for (default: current user running the agent)
+ssh_user: ""
+
+# Path to the SSH authorized_keys file (default: ~/.ssh/authorized_keys for the user)
+authorized_keys_path: ""
+
+# Enable debug endpoints (pprof, etc.)
+enable_debug: false
+
+# Reserved for future: callback_url for confirming key install
+callback_url: ""

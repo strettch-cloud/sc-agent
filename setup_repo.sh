@@ -4,20 +4,18 @@ set -e
 # --- Configuration ---
 ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
-PACKAGE_NAME="sc-metrics-agent"
-PACKAGE_VERSION=$(git describe --tags --always --dirty) # Version is sourced from git tag
+PACKAGE_NAME="sc-agent"
+PACKAGE_VERSION=$(git describe --tags --always --dirty)
 REPO_DOMAIN="repo.cloud.strettch.dev"
-DISTRIBUTIONS="focal jammy noble" # Use spaces for loop iteration
-# The standard, public-facing directory for the repository files.
-# Using /var/www/html is the standard practice and avoids AppArmor/SELinux issues.
+DISTRIBUTIONS="focal jammy noble"
 WEB_ROOT_DIR="/var/www/html/aptly"
 # ---
 
-# --- Asset Paths (uses files from your repo) ---
+# --- Asset Paths ---
 SERVICE_FILE="packaging/systemd/${PACKAGE_NAME}.service"
 POSTINSTALL_SCRIPT="packaging/scripts/post-install.sh"
 PREREMOVE_SCRIPT="packaging/scripts/pre-remove.sh"
-START_SCRIPT_FILENAME="sc-agent.sh"
+START_SCRIPT_FILENAME="start-sc-agent.sh"
 START_SCRIPT_SOURCE_PATH="packaging/scripts/${START_SCRIPT_FILENAME}"
 # ---
 
@@ -56,43 +54,44 @@ if sudo aptly snapshot list -raw | grep -q .; then
     done <<< "$(sudo aptly snapshot list -raw)"
 fi
 sudo aptly db cleanup
-sudo aptly repo remove sc-metrics-agent-repo ${PACKAGE_NAME} || echo "No package to remove from repo. Continuing."
+sudo aptly repo remove sc-agent-repo ${PACKAGE_NAME} || echo "No package to remove from repo. Continuing."
 rm -f ${PACKAGE_NAME}_*.deb
 
 echo "--- [Step 2/7] Building Go binary via Makefile..."
-make GOOS=linux GOARCH=amd64 build
+GOOS=linux GOARCH=amd64 make build
 
 echo "--- [Step 3/7] Preparing packaging assets..."
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/${PACKAGE_NAME}" "${STAGING_DIR}/etc/systemd/system"
 cp build/${PACKAGE_NAME} "${STAGING_DIR}/usr/local/bin/"
-# === Add start script ===
 cp "${START_SCRIPT_SOURCE_PATH}" "${STAGING_DIR}/usr/local/bin/${START_SCRIPT_FILENAME}"
 chmod +x "${STAGING_DIR}/usr/local/bin/${START_SCRIPT_FILENAME}"
-# === End add start script ===
 cp config.example.yaml "${STAGING_DIR}/etc/${PACKAGE_NAME}/config.yaml"
 cp "${SERVICE_FILE}" "${STAGING_DIR}/etc/systemd/system/"
 chmod +x "${POSTINSTALL_SCRIPT}" "${PREREMOVE_SCRIPT}"
 
 echo "--- [Step 4/7] Building the .deb package..."
+sudo chown -R $(whoami) "${STAGING_DIR}"
+chmod -R u+rwX "${STAGING_DIR}"
 fpm -s dir -t deb -n ${PACKAGE_NAME} -v ${PACKAGE_VERSION} \
   -C "${STAGING_DIR}/" \
-  --description "SC Metrics Agent for system monitoring by ${ORG_NAME}" \
+  --description "SC Agent for system access by ${ORG_NAME}" \
   --maintainer "${GPG_EMAIL}" \
-  --url "https://github.com/strettch/sc-metrics-agent" \
-  --depends "libc6" --depends "dmidecode" \
+  --url "https://github.com/strettch/sc-agent" \
+  --depends "libc6" \
   --after-install "${POSTINSTALL_SCRIPT}" \
-  --before-remove "${PREREMOVE_SCRIPT}"
+  --before-remove "${PREREMOVE_SCRIPT}" \
+  --deb-no-default-config-files
 
 echo "--- [Step 5/7] Creating and Publishing the new version..."
-if ! sudo aptly repo show sc-metrics-agent-repo > /dev/null 2>&1; then
+if ! sudo aptly repo show sc-agent-repo > /dev/null 2>&1; then
     FIRST_DIST=$(echo ${DISTRIBUTIONS} | cut -d' ' -f1)
-    sudo aptly repo create -distribution="${FIRST_DIST}" -component="main" sc-metrics-agent-repo
+    sudo aptly repo create -distribution="${FIRST_DIST}" -component="main" sc-agent-repo
 fi
-sudo aptly repo add sc-metrics-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
+sudo aptly repo add sc-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
 SNAPSHOT_NAME="${PACKAGE_NAME}-${PACKAGE_VERSION}"
-sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-metrics-agent-repo
+sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-agent-repo
 
 echo "Publishing new snapshot to distributions: ${DISTRIBUTIONS}"
 for dist in ${DISTRIBUTIONS}; do
@@ -153,7 +152,7 @@ log_and_run "Installing \${PACKAGE_NAME}..." "apt-get install -y \"\${PACKAGE_NA
 echo
 echo "---"
 echo "✅ \${PACKAGE_NAME} was installed successfully!"
-echo "IMPORTANT: Please edit the configuration file to set your ingestor endpoint:"
+echo "IMPORTANT: Please edit the configuration file to set your backend endpoint:"
 echo "   sudo nano \${CONFIG_FILE}"
 echo "After editing, restart the agent: sudo systemctl restart \${PACKAGE_NAME}"
 echo "To check status: systemctl status \${PACKAGE_NAME}"
@@ -164,7 +163,6 @@ EOF
 sudo mv "${TMP_INSTALL_SCRIPT}" "${INSTALL_SCRIPT_PATH}"
 
 echo "--- [Step 7/7] Finalizing permissions and restarting Caddy..."
-# This is the crucial fix: set ownership and permissions AFTER all files are in place.
 sudo chmod 755 /var/www /var/www/html
 sudo chown -R caddy:caddy "${WEB_ROOT_DIR}"
 sudo chmod -R 755 "${WEB_ROOT_DIR}"
