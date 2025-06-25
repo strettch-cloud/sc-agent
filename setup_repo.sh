@@ -6,7 +6,7 @@ ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
 PACKAGE_NAME="sc-agent"
 PACKAGE_VERSION=$(git describe --tags --always --dirty)
-REPO_DOMAIN="repo.cloud.strettch.dev"
+REPO_DOMAIN="164.92.247.171"
 DISTRIBUTIONS="focal jammy noble"
 WEB_ROOT_DIR="/var/www/html/aptly"
 # ---
