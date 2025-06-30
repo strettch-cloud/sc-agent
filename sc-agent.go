@@ -88,7 +88,7 @@ func notifyHandler(w http.ResponseWriter, r *http.Request) {
 
 func fetchPublicKeyFromResourceManager(sessionID string) (string, error) {
 	// TODO: Make resource manager URL configurable
-	url := fmt.Sprintf("http://localhost:8081/api/v1/console/public-key?session_id=%s", sessionID)
+	url := fmt.Sprintf("https://api.cloud.strettch.dev/resource-manager/api/v1/console/public-key?session_id=%s", sessionID)
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
