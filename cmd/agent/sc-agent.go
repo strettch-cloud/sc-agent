@@ -58,6 +58,14 @@ func notifyHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	//first remove all keys that were installed to make sure we use one key on the vm always
+	err = removeAllExistingKeys()
+	if err != nil {
+		fmt.Printf("[sc-agent] Error removing existing keys: %v\n", err)
+		http.Error(w, "Failed to remove existing keys", http.StatusInternalServerError)
+		return
+	}
+
 	// 1. Fetch public key from resource manager
 	publicKey, err := fetchPublicKeyFromResourceManager(payload.SessionID)
 	if err != nil {
@@ -65,6 +73,7 @@ func notifyHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to fetch public key", http.StatusInternalServerError)
 		return
 	}
+	fmt.Printf("[sc-agent] Public key: %s\n", publicKey)
 
 	// 2. Install public key
 	err = installPublicKey(publicKey)
@@ -88,7 +97,7 @@ func notifyHandler(w http.ResponseWriter, r *http.Request) {
 
 func fetchPublicKeyFromResourceManager(sessionID string) (string, error) {
 	// TODO: Make resource manager URL configurable
-	url := fmt.Sprintf("https://api.cloud.strettch.dev/resource-manager/api/v1/console/public-key?session_id=%s", sessionID)
+	url := fmt.Sprintf("http://localhost:8080/resource-manager/api/v1/console/public-key?session_id=%s", sessionID)
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
@@ -107,6 +116,7 @@ func fetchPublicKeyFromResourceManager(sessionID string) (string, error) {
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", err
 	}
+	fmt.Printf("[sc-agent] Public key: %s\n", result)
 	return result.PublicKey, nil
 }
 
@@ -115,6 +125,32 @@ func confirmKeyInstalled(sessionID string) error {
 	// For now, assume Redis is accessible and set a flag
 	// In production, you may want to POST to a callback endpoint
 	// This is a placeholder
+	return nil
+}
+
+func removeAllExistingKeys() error {
+	userInfo, err := user.Current()
+	if err != nil {
+		return err
+	}
+
+	sshDir := filepath.Join(userInfo.HomeDir, ".ssh")
+	authKeysPath := filepath.Join(sshDir, "authorized_keys")
+
+	// Check if the file exists
+	if _, err := os.Stat(authKeysPath); os.IsNotExist(err) {
+		// File doesn't exist, nothing to remove
+		fmt.Printf("[sc-agent] No existing authorized_keys file found\n")
+		return nil
+	}
+
+	// Remove the file completely
+	err = os.Remove(authKeysPath)
+	if err != nil {
+		return fmt.Errorf("failed to remove authorized_keys: %w", err)
+	}
+
+	fmt.Printf("[sc-agent] Removed all existing SSH keys\n")
 	return nil
 }
 
@@ -140,6 +176,8 @@ func installPublicKey(pubKey string) error {
 	if _, err := f.WriteString(pubKey + "\n"); err != nil {
 		return fmt.Errorf("failed to write key: %w", err)
 	}
+
+	fmt.Printf("[sc-agent] Installing key: %s\n", pubKey)
 
 	fmt.Println("[sc-agent] ✅ Key installed.")
 	return nil

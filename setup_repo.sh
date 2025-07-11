@@ -64,9 +64,16 @@ echo "--- [Step 3/7] Preparing packaging assets..."
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/${PACKAGE_NAME}" "${STAGING_DIR}/etc/systemd/system"
+# === Add start script ===
 cp build/${PACKAGE_NAME} "${STAGING_DIR}/usr/local/bin/"
 cp "${START_SCRIPT_SOURCE_PATH}" "${STAGING_DIR}/usr/local/bin/${START_SCRIPT_FILENAME}"
 chmod +x "${STAGING_DIR}/usr/local/bin/${START_SCRIPT_FILENAME}"
+# === End add start script ===
+# === Add updater script and service ===
+cp "packaging/scripts/${PACKAGE_NAME}-updater.sh" "${STAGING_DIR}/usr/local/bin/"
+chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
+cp "packaging/systemd/${PACKAGE_NAME}-updater.service" "${STAGING_DIR}/etc/systemd/system/"
+# === End add updater script and service ===
 cp config.example.yaml "${STAGING_DIR}/etc/${PACKAGE_NAME}/config.yaml"
 cp "${SERVICE_FILE}" "${STAGING_DIR}/etc/systemd/system/"
 chmod +x "${POSTINSTALL_SCRIPT}" "${PREREMOVE_SCRIPT}"
@@ -181,3 +188,5 @@ echo "✅ Repository setup complete!"
 echo "To install the agent on a client machine, run:"
 echo "curl -sSL https://${REPO_DOMAIN}/install.sh | sudo bash"
 echo "========================================================================"
+
+

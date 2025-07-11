@@ -1,0 +1,205 @@
+name: Stable Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 0.1.0, 0.1.1, 0.2.0)'
+        required: true
+        type: string
+      release_type:
+        description: 'Type of release'
+        required: true
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+
+jobs:
+  validate-version:
+    name: Validate Release Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Validate version format
+      id: validate
+      run: |
+        VERSION="${{ github.event.inputs.version }}"
+        
+        # Validate semantic version format
+        if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Error: Version must be in format X.Y.Z (e.g., 0.1.0)"
+          exit 1
+        fi
+        
+        # Check if version already exists
+        if git tag -l | grep -q "^v$VERSION$"; then
+          echo "Error: Version v$VERSION already exists"
+          exit 1
+        fi
+        
+        # Get last stable release
+        LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "v0.0.0")
+        LAST_STABLE_CLEAN=${LAST_STABLE#v}
+        
+        echo "Last stable version: $LAST_STABLE_CLEAN"
+        echo "New version: $VERSION"
+        echo "Release type: ${{ github.event.inputs.release_type }}"
+        
+        # Validate version increment
+        python3 << EOF
+        import sys
+        from packaging import version
+        
+        last = "$LAST_STABLE_CLEAN".split('.')
+        new = "$VERSION".split('.')
+        release_type = "${{ github.event.inputs.release_type }}"
+        
+        last_major, last_minor, last_patch = int(last[0]), int(last[1]), int(last[2])
+        new_major, new_minor, new_patch = int(new[0]), int(new[1]), int(new[2])
+        
+        if release_type == "major":
+            expected = f"{last_major + 1}.0.0"
+        elif release_type == "minor":
+            expected = f"{last_major}.{last_minor + 1}.0"
+        else:  # patch
+            expected = f"{last_major}.{last_minor}.{last_patch + 1}"
+        
+        if "$VERSION" != expected:
+            print(f"Error: For {release_type} release, expected version {expected}, got $VERSION")
+            sys.exit(1)
+        
+        print(f"Version validation passed: $VERSION is a valid {release_type} release")
+        EOF
+        
+        echo "version=v$VERSION" >> $GITHUB_OUTPUT
+
+  stable-release:
+    name: Build and Deploy Stable Release
+    runs-on: ubuntu-latest
+    needs: validate-version
+    permissions:
+      contents: write  # Required for creating releases
+      actions: read    # Required for downloading artifacts
+      checks: read     # Required for status checks
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Generate comprehensive changelog
+      id: changelog
+      run: |
+        chmod +x .github/scripts/generate-changelog.sh
+        CHANGELOG=$(.github/scripts/generate-changelog.sh stable)
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Build binary
+      env:
+        VERSION: ${{ needs.validate-version.outputs.version }}
+      run: |
+        make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
+
+    - name: Install packaging dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ruby ruby-dev build-essential
+        sudo gem install fpm
+
+    - name: Build package
+      env:
+        VERSION: ${{ needs.validate-version.outputs.version }}
+      run: |
+        # Create staging directory
+        STAGING_DIR="/tmp/sc-agent-build"
+        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+        
+        # Copy files
+        cp build/sc-agent "${STAGING_DIR}/usr/local/bin/"
+        cp packaging/scripts/start-sc-agent.sh "${STAGING_DIR}/usr/local/bin/"
+        chmod +x "${STAGING_DIR}/usr/local/bin/start-sc-agent.sh"
+        cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
+        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
+        cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
+        cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-agent-updater.service "${STAGING_DIR}/etc/systemd/system/"
+        
+        # Build package
+        fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
+          -C "${STAGING_DIR}/" \
+          --description "SC Agent for system monitoring" \
+          --maintainer "engineering@strettch.com" \
+          --url "https://github.com/strettch/sc-agent" \
+          --depends "libc6" --depends "dmidecode" \
+          --after-install "packaging/scripts/post-install.sh" \
+          --before-remove "packaging/scripts/pre-remove.sh"
+
+    - name: Deploy to repository
+      env:
+        REPO_SSH_KEY: ${{ secrets.REPO_SSH_KEY }}
+        REPO_HOST: ${{ secrets.REPO_HOST }}
+        REPO_USER: ${{ secrets.REPO_USER }}
+        VERSION: ${{ needs.validate-version.outputs.version }}
+      run: |
+        chmod +x .github/scripts/deploy-to-repo.sh
+        .github/scripts/deploy-to-repo.sh stable sc-agent_${VERSION#v}_amd64.deb
+
+    - name: Create Git tag
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a ${{ needs.validate-version.outputs.version }} -m "Release ${{ needs.validate-version.outputs.version }}"
+        git push origin ${{ needs.validate-version.outputs.version }}
+
+    - name: Create GitHub release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: ${{ needs.validate-version.outputs.version }}
+        name: "Release ${{ needs.validate-version.outputs.version }}"
+        body: |
+          ## Release ${{ needs.validate-version.outputs.version }}
+          
+          This is a stable release ready for production deployment.
+          
+          ### Installation
+          ```bash
+          curl -sSL https://repo.cloud.strettch.dev/install.sh | sudo bash
+          ```
+          
+          ### Changes since last release:
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ### Release Information
+          - **Release Type:** ${{ github.event.inputs.release_type }}
+          - **Build Date:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - **Commit:** ${{ github.sha }}
+        artifacts: "sc-agent_*.deb"
+        token: ${{ secrets.GITHUB_TOKEN }}
