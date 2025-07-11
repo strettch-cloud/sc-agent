@@ -191,7 +191,7 @@ jobs:
           
           ### Installation
           ```bash
-          curl -sSL https://repo.cloud.strettch.dev/install.sh | sudo bash
+          curl -sSL https://sc.repo.cloud.strettch.dev/install.sh | sudo bash
           ```
           
           ### Changes since last release:
