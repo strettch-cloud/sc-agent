@@ -18,7 +18,7 @@ WEB_ROOT_DIR="/srv/repo/public/console"
 
 # --- Asset Paths ---
 SERVICE_FILE="packaging/systemd/${PACKAGE_NAME}.service"
-UPDATER_SERVICE="packaging/systemd/${PACKAGE_NAME}-updater.service"
+UPDATER_SERVICE="packaging/systemd/${PACKAGE_NAME}-update-scheduler.service"
 UPDATER_TIMER="packaging/systemd/${PACKAGE_NAME}-update-scheduler.timer"
 UPDATER_SCRIPT="packaging/scripts/${PACKAGE_NAME}-updater.sh"
 POSTINSTALL_SCRIPT="packaging/scripts/post-install.sh"
