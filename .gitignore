@@ -47,3 +47,5 @@ Thumbs.db
 # Test coverage
 coverage.txt
 coverage.html
+
+build

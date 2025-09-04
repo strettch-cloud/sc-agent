@@ -43,7 +43,8 @@ type Agent struct {
 func main() {
 	var (
 		showVersion    = flag.Bool("v", false, "Print version and exit")
-		validateConfig = flag.String("validate-config", "", "Validate configuration file and exit")
+		validateConfig = flag.Bool("validate-config", false, "Validate configuration and exit")
+		configFile     = flag.String("config", "", "Path to configuration file")
 	)
 	flag.Parse()
 
@@ -52,8 +53,14 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *validateConfig != "" {
-		if err := validateConfigFile(*validateConfig); err != nil {
+	// Set config file path if provided
+	if *configFile != "" {
+		os.Setenv("SC_AGENT_CONFIG", *configFile)
+	}
+
+	if *validateConfig {
+		_, err := config.Load()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Configuration validation failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -67,13 +74,6 @@ func main() {
 	}
 }
 
-func validateConfigFile(configPath string) error {
-	if err := os.Setenv("SC_AGENT_CONFIG", configPath); err != nil {
-		return fmt.Errorf("failed to set config path: %w", err)
-	}
-	_, err := config.Load()
-	return err
-}
 
 func runAgent() error {
 	if os.Getuid() != 0 {

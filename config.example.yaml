@@ -1,8 +1,7 @@
-# SC Agent Configuration
+# SC Agent Production Configuration
 metadata_service_endpoint: "http://127.0.0.1:8000/metadata/v1/auth-token"
-backend_endpoint: "http://127.0.0.1:8080"
-resource_id: "a4c6bb6c-22ca-4589-c8ca-998a808ffece"
-resource_ip: "127.0.0.1" 
+resource_id: "a4c6bb6c-21ca-4289-b4ca-998a808ffece"
+resource_ip: "127.0.0.1"
 
 console:
   udp_knock_port: 9999

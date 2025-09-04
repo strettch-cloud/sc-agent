@@ -18,7 +18,7 @@ type Processor struct {
 	config         *config.Config
 	logger         *zap.Logger
 	metadataClient *metadata.Client
-	backendClient  *backend.Client
+	cloudAPIClient  *cloudapi.Client
 	keyManager     *ssh.KeyManager
 	udpListener    *console.UDPListener
 	
@@ -30,7 +30,7 @@ type Processor struct {
 
 func NewProcessor(cfg *config.Config, logger *zap.Logger) (*Processor, error) {
 	metadataClient := metadata.NewClient(cfg.MetadataServiceEndpoint, cfg.HTTPTimeout, logger)
-	backendClient := backend.NewClient(cfg.BackendEndpoint, cfg.ResourceID, cfg.HTTPTimeout, logger)
+	cloudAPIClient := cloudapi.NewClient(metadataClient, cfg.ResourceID, cfg.HTTPTimeout, logger)
 	
 	keyManager, err := ssh.NewKeyManager(logger)
 	if err != nil {
@@ -48,7 +48,7 @@ func NewProcessor(cfg *config.Config, logger *zap.Logger) (*Processor, error) {
 		config:         cfg,
 		logger:         logger,
 		metadataClient: metadataClient,
-		backendClient:  backendClient,
+		cloudAPIClient:  cloudAPIClient,
 		keyManager:     keyManager,
 		udpListener:    udpListener,
 		cleanupTicker:  time.NewTicker(cfg.KeyCleanupInterval),
@@ -64,7 +64,7 @@ func (p *Processor) Start() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	
-	_, publicKey, err := p.metadataClient.GetAuthToken(ctx, p.config.ResourceID)
+	_, publicKey, _, err := p.metadataClient.GetAuthToken(ctx, p.config.ResourceID)
 	if err != nil {
 		p.logger.Error("Failed to fetch initial public key", zap.Error(err))
 		return fmt.Errorf("failed to initialize public key: %w", err)
@@ -109,8 +109,8 @@ func (p *Processor) Stop() error {
 	if p.metadataClient != nil {
 		p.metadataClient.Close()
 	}
-	if p.backendClient != nil {
-		p.backendClient.Close()
+	if p.cloudAPIClient != nil {
+		p.cloudAPIClient.Close()
 	}
 
 	return nil
@@ -159,7 +159,7 @@ func (p *Processor) handleKnockEvent(event console.UDPKnockEvent) {
 	defer cancel()
 
 	// Get auth token and public key from metadata service
-	authToken, publicKey, err := p.metadataClient.GetAuthToken(ctx, p.config.ResourceID)
+	authToken, publicKey, _, err := p.metadataClient.GetAuthToken(ctx, p.config.ResourceID)
 	if err != nil {
 		p.logger.Error("Failed to get auth token", zap.Error(err))
 		return
@@ -175,8 +175,8 @@ func (p *Processor) handleKnockEvent(event console.UDPKnockEvent) {
 		}
 	}
 
-	// Fetch SAT key from backend
-	satKey, err := p.backendClient.GetSATKeyWithRetry(ctx, authToken, p.config.MaxRetries, p.config.RetryInterval)
+	// Fetch Strettch Access Token (SAT) key
+	satKey, err := p.cloudAPIClient.GetSATKeyWithRetry(ctx, authToken, p.config.MaxRetries, p.config.RetryInterval)
 	if err != nil {
 		p.logger.Error("Failed to fetch SAT key", zap.Error(err))
 		return

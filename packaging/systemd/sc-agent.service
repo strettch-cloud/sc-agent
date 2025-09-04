@@ -1,16 +1,60 @@
 [Unit]
-Description=SC Agent
-After=network.target
-Wants=network.target
+Description=Strettch Cloud Agent - SSH Key Management and System Monitoring
+Documentation=https://docs.cloud.strettch.com/agents/sc-agent
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
+ExecStartPre=/usr/local/bin/sc-agent -validate-config
+ExecStart=/usr/local/bin/sc-agent
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+
+# Restart configuration
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=0
+SuccessExitStatus=0 2
+TimeoutStartSec=90
+TimeoutStopSec=90
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security hardening
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=no
+ReadWritePaths=/etc/sc-agent /var/log/sc-agent /var/run/sc-agent /root/.ssh /home
+NoNewPrivileges=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Environment
+EnvironmentFile=-/etc/sc-agent/environment
+Environment="SC_AGENT_CONFIG=/etc/sc-agent/config.yaml"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sc-agent
+
+# User/Group
 User=root
 Group=root
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/usr/local/bin/start-sc-agent.sh
-Restart=always
-RestartSec=5
+
+# Kill configuration
 KillMode=mixed
 KillSignal=SIGTERM
 

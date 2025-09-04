@@ -2,7 +2,7 @@ name: Beta Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [ dev ]
 
 jobs:
   beta-release:
@@ -114,7 +114,7 @@ jobs:
           
           ### Installation
           ```bash
-          curl -sSL https://sc.repo.cloud.strettch.dev/install.sh | sudo bash
+          curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash
           ```
           
           ### Changes in this beta release:

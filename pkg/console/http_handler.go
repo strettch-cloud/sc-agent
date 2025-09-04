@@ -20,7 +20,7 @@ type HTTPHandler struct {
 	config         *config.Config
 	logger         *zap.Logger
 	metadataClient *metadata.Client
-	backendClient  *backend.Client
+	cloudAPIClient  *cloudapi.Client
 	keyManager     *ssh.KeyManager
 }
 
@@ -32,7 +32,7 @@ type NotifyPayload struct {
 // NewHTTPHandler creates a new HTTP notification handler
 func NewHTTPHandler(cfg *config.Config, logger *zap.Logger) (*HTTPHandler, error) {
 	metadataClient := metadata.NewClient(cfg.MetadataServiceEndpoint, cfg.HTTPTimeout, logger)
-	backendClient := backend.NewClient(cfg.BackendEndpoint, cfg.ResourceID, cfg.HTTPTimeout, logger)
+	cloudAPIClient := cloudapi.NewClient(metadataClient, cfg.ResourceID, cfg.HTTPTimeout, logger)
 	
 	keyManager, err := ssh.NewKeyManager(logger)
 	if err != nil {
@@ -43,7 +43,7 @@ func NewHTTPHandler(cfg *config.Config, logger *zap.Logger) (*HTTPHandler, error
 		config:         cfg,
 		logger:         logger,
 		metadataClient: metadataClient,
-		backendClient:  backendClient,
+		cloudAPIClient:  cloudAPIClient,
 		keyManager:     keyManager,
 	}, nil
 }
@@ -116,7 +116,7 @@ func (h *HTTPHandler) processNotification(ctx context.Context) error {
 	}
 
 	// Fetch SAT key from strettch-cloud-api
-	satKey, err := h.backendClient.GetSATKeyWithRetry(ctx, authToken, h.config.MaxRetries, h.config.RetryInterval)
+	satKey, err := h.cloudAPIClient.GetSATKeyWithRetry(ctx, authToken, h.config.MaxRetries, h.config.RetryInterval)
 	if err != nil {
 		return fmt.Errorf("failed to fetch SAT key: %w", err)
 	}
@@ -135,8 +135,8 @@ func (h *HTTPHandler) Close() error {
 	if h.metadataClient != nil {
 		h.metadataClient.Close()
 	}
-	if h.backendClient != nil {
-		h.backendClient.Close()
+	if h.cloudAPIClient != nil {
+		h.cloudAPIClient.Close()
 	}
 	return nil
 }
