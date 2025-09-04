@@ -8,7 +8,7 @@ set -e  # Exit immediately if any command fails
 
 # Define service names that need to be stopped/disabled
 SERVICE_NAME="sc-agent.service"
-UPDATER_SERVICE="sc-agent-updater.service"
+UPDATER_SERVICE="sc-agent-update-scheduler.service"
 UPDATER_TIMER="sc-agent-update-scheduler.timer"
 
 # Check the type of removal being performed
