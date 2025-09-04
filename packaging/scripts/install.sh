@@ -6,7 +6,7 @@
 set -e  # Exit immediately if any command fails
 
 # Repository configuration - can be overridden with environment variable
-PACKAGE_REPO_URL="${SC_REPO_URL:-https://repo.cloud.strettch.dev}"
+PACKAGE_REPO_URL="${SC_REPO_URL:-https://repo.cloud.strettch.dev/console}"
 PACKAGE_NAME="sc-agent"
 
 # Check if running on Debian/Ubuntu (only supported systems)
@@ -21,7 +21,7 @@ echo "Installing SC-Agent on Debian/Ubuntu system..."
 # Download and install GPG key for package verification
 # -fsSL flags: fail silently, silent, show errors, follow redirects
 echo "Adding repository GPG key..."
-curl -fsSL "${PACKAGE_REPO_URL}/gpg.key" | gpg --dearmor -o /usr/share/keyrings/${PACKAGE_NAME}-keyring.gpg
+curl -fsSL "${PACKAGE_REPO_URL}/gpg.key" | gpg --dearmor | tee /usr/share/keyrings/${PACKAGE_NAME}-keyring.gpg > /dev/null
 
 # Add repository to APT sources
 # signed-by ensures only packages signed with our GPG key are accepted

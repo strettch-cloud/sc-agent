@@ -47,7 +47,7 @@ for file in "${required_files[@]}"; do
     fi
 done
 
-# Check for required tools (these should be installed on the repository server)
+# Check for required tools
 for tool in fpm aptly gpg; do
     if ! command -v $tool &> /dev/null; then
         echo "Error: $tool is not installed" >&2
@@ -57,11 +57,10 @@ done
 # ---
 
 echo "--- [Step 1/7] Cleaning up previous repository publications..."
-# Clean up old Aptly publications and snapshots
 for dist in ${DISTRIBUTIONS}; do
     sudo aptly publish drop ${dist} 2>/dev/null || true
 done
-sudo aptly repo remove sc-agent-repo ${PACKAGE_NAME} 2>/dev/null || echo "No package to remove from repo. Continuing."
+sudo aptly repo remove sc-agent-repo ${PACKAGE_NAME} 2>/dev/null || echo "No package to remove. Continuing."
 sudo aptly db cleanup
 rm -f ${PACKAGE_NAME}_*.deb
 
@@ -69,14 +68,11 @@ echo "--- [Step 2/7] Building Go binary via Makefile..."
 GOOS=linux GOARCH=amd64 make build
 
 echo "--- [Step 3/7] Preparing packaging assets..."
-# Prepare staging directory structure
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/usr/local/bin"
-mkdir -p "${STAGING_DIR}/etc/${PACKAGE_NAME}" 
-mkdir -p "${STAGING_DIR}/etc/systemd/system"
+mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/${PACKAGE_NAME}" "${STAGING_DIR}/etc/systemd/system"
 
-# Copy files to staging
+# Copy files
 cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/local/bin/"
 chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
 
@@ -101,45 +97,32 @@ fpm -s dir -t deb \
     --before-remove "${PREREMOVE_SCRIPT}"
 
 echo "--- [Step 4/7] Building the .deb package..."
-# Create Aptly repository if it doesn't exist
 if ! sudo aptly repo show sc-agent-repo > /dev/null 2>&1; then
     sudo aptly repo create -distribution="focal" -component="main" sc-agent-repo
 fi
 
-# Add package to repository
 sudo aptly repo add sc-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
-
-# Create snapshot
 SNAPSHOT_NAME="${PACKAGE_NAME}-${PACKAGE_VERSION}"
 sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-agent-repo
 
-# Configure GPG environment for batch mode
+# --- Configure GPG environment ---
 export GPG_TTY=$(tty)
 unset DISPLAY
 
-# Check if GPG passphrase file exists
-if [ -f "/root/gpg-passphrase.txt" ]; then
-    echo "Using GPG passphrase file for signing..."
-    PASSPHRASE_OPTION="-passphrase-file=/root/gpg-passphrase.txt"
-else
-    echo "Warning: No GPG passphrase file found at /root/gpg-passphrase.txt"
-    echo "Attempting to use key without passphrase..."
-    PASSPHRASE_OPTION=""
+# Get the fingerprint for the GPG key
+GPG_FINGERPRINT=$(gpg --list-secret-keys --with-colons "${GPG_EMAIL}" | awk -F: '/^sec/{print $5; exit}')
+if [ -z "${GPG_FINGERPRINT}" ]; then
+    echo "Error: Could not find GPG key for ${GPG_EMAIL}" >&2
+    exit 1
 fi
 
+# Publish snapshots with correct fingerprint
 for dist in ${DISTRIBUTIONS}; do
     echo "Publishing for ${dist}..."
-    if [ -n "$PASSPHRASE_OPTION" ]; then
-        sudo aptly publish snapshot -gpg-key="${GPG_EMAIL}" -distribution="${dist}" \
-            -batch $PASSPHRASE_OPTION "${SNAPSHOT_NAME}"
-    else
-        sudo aptly publish snapshot -gpg-key="${GPG_EMAIL}" -distribution="${dist}" \
-            -batch "${SNAPSHOT_NAME}"
-    fi
+    sudo aptly publish snapshot -gpg-key="${GPG_FINGERPRINT}" -distribution="${dist}" -batch "${SNAPSHOT_NAME}"
 done
 
 echo "--- [Step 5/7] Creating and Publishing the new version..."
-# Copy repository files to web root
 sudo mkdir -p "${WEB_ROOT_DIR}/aptly"
 sudo rsync -a --delete ~/.aptly/public/ "${WEB_ROOT_DIR}/aptly/"
 
@@ -148,69 +131,65 @@ GPG_PUBLIC_KEY_FILE="${PACKAGE_NAME}-repo.gpg"
 gpg --armor --export "${GPG_EMAIL}" > "${GPG_PUBLIC_KEY_FILE}"
 sudo mv "${GPG_PUBLIC_KEY_FILE}" "${WEB_ROOT_DIR}/"
 
-# Generate the install.sh script dynamically (like sc-metrics-agent does)
+# Generate dynamic install.sh
 INSTALL_SCRIPT_PATH="${WEB_ROOT_DIR}/install.sh"
 TMP_INSTALL_SCRIPT=$(mktemp)
 cat << 'INSTALL_EOF' > "${TMP_INSTALL_SCRIPT}"
 #!/bin/sh
 set -e
-# --- Configuration ---
 REPO_HOST="repo.cloud.strettch.dev"
-REPO_PATH="console"  # Subdirectory for sc-agent
+REPO_PATH="console"
 PACKAGE_NAME="sc-agent"
 GPG_KEY_FILENAME="sc-agent-repo.gpg"
 CONFIG_FILE="/etc/sc-agent/config.yaml"
-# ---
+
 if [ "$(id -u)" -ne "0" ]; then
-    echo "This script must be run as root. Please use 'sudo'." >&2
+    echo "Run as root" >&2
     exit 1
 fi
+
 if [ -f /etc/os-release ]; then
     DISTRIBUTION=$(. /etc/os-release && echo "$VERSION_CODENAME")
 else
-    echo "Error: Unable to detect OS distribution codename." >&2
+    echo "Error: Cannot detect OS codename" >&2
     exit 1
 fi
+
 echo "--- Installing ${PACKAGE_NAME} for ${DISTRIBUTION} ---"
 
 log_and_run() {
     echo "$1"
     if ! eval "$2"; then
-        echo "Error: Failed to $3. Please check the output above for details." >&2
+        echo "Error: Failed to $3" >&2
         exit 1
     fi
 }
 
 log_and_run "Updating package lists..." "apt-get update > /dev/null" "update package lists"
-log_and_run "Installing prerequisite packages..." "apt-get install -y apt-transport-https ca-certificates curl gnupg > /dev/null" "install prerequisite packages"
+log_and_run "Installing prerequisites..." "apt-get install -y apt-transport-https ca-certificates curl gnupg > /dev/null" "install prerequisites"
 
 KEYRING_FILE="/usr/share/keyrings/${PACKAGE_NAME}-keyring.gpg"
-log_and_run "Downloading and installing GPG key..." "curl -fsSL \"https://${REPO_HOST}/${REPO_PATH}/${GPG_KEY_FILENAME}\" | gpg --dearmor | sudo tee \"${KEYRING_FILE}\" >/dev/null" "download and install GPG key"
+log_and_run "Downloading GPG key..." "curl -fsSL \"https://${REPO_HOST}/${REPO_PATH}/${GPG_KEY_FILENAME}\" | gpg --dearmor | tee \"${KEYRING_FILE}\" >/dev/null" "download GPG key"
 
 SOURCES_FILE="/etc/apt/sources.list.d/${PACKAGE_NAME}.list"
-log_and_run "Adding ${PACKAGE_NAME} repository..." "echo \"deb [signed-by=${KEYRING_FILE}] https://${REPO_HOST}/${REPO_PATH}/aptly ${DISTRIBUTION} main\" | sudo tee \"${SOURCES_FILE}\" >/dev/null" "add ${PACKAGE_NAME} repository"
+log_and_run "Adding repository..." "echo \"deb [signed-by=${KEYRING_FILE}] https://${REPO_HOST}/${REPO_PATH}/aptly ${DISTRIBUTION} main\" | tee \"${SOURCES_FILE}\" >/dev/null" "add repository"
 
-log_and_run "Updating package list for ${PACKAGE_NAME}..." "apt-get update -o Dir::Etc::SourceList='${SOURCES_FILE}' -o Dir::Etc::SourceParts='-' -o APT::Get::List-Cleanup='0' > /dev/null" "update package list for ${PACKAGE_NAME}"
+log_and_run "Updating package index..." "apt-get update -o Dir::Etc::SourceList='${SOURCES_FILE}' -o Dir::Etc::SourceParts='-' -o APT::Get::List-Cleanup='0' > /dev/null" "update package index"
 
 log_and_run "Installing ${PACKAGE_NAME}..." "apt-get install -y \"${PACKAGE_NAME}\"" "install ${PACKAGE_NAME}"
-echo
-echo "✅ ${PACKAGE_NAME} was installed successfully!"
+
+echo "✅ ${PACKAGE_NAME} installed successfully!"
 exit 0
 INSTALL_EOF
 
 sudo mv "${TMP_INSTALL_SCRIPT}" "${INSTALL_SCRIPT_PATH}"
 sudo chmod +x "${INSTALL_SCRIPT_PATH}"
 
-# Set permissions
-sudo chown -R caddy:caddy /srv/repo/public 2>/dev/null || \
-sudo chown -R www-data:www-data /srv/repo/public 2>/dev/null || true
+sudo chown -R caddy:caddy /srv/repo/public 2>/dev/null || sudo chown -R www-data:www-data /srv/repo/public 2>/dev/null || true
 sudo chmod -R 755 /srv/repo/public
 
 echo "--- [Step 6/7] Repository files configured..."
 echo "--- [Step 7/7] Finalizing setup..."
-# Note: Caddy configuration is now managed separately for both agents
-# The main Caddyfile handles routing to /console/ and /metrics/ subdirectories
-
 echo
 echo "========================================================================"
 echo "✅ Repository setup complete!"
