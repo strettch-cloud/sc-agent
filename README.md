@@ -45,12 +45,12 @@ sudo systemctl status sc-agent-update-scheduler.timer
 
 ### Manual update
 ```bash
-sudo systemctl start sc-agent-updater
+sudo systemctl start sc-agent-update-scheduler.timer
 ```
 
 ### Auto-update logs
 ```bash
-sudo journalctl -u sc-agent-updater -f
+sudo journalctl -u sc-agent-update-scheduler.timer -f
 sudo journalctl -u sc-agent-update-scheduler.timer
 ```
 
