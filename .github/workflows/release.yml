@@ -213,9 +213,9 @@ jobs:
         chmod 600 ~/.ssh/deploy_key
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
-        # Deploy packages and run setup
-        scp -i ~/.ssh/deploy_key *.deb "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && ./setup_repo.sh"
+        # Update codebase and deploy packages  
+        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
         
         echo "✅ Deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
