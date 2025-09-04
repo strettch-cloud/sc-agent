@@ -79,7 +79,7 @@ jobs:
         chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
         cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
         cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-updater.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
         cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
         # Build package
@@ -105,9 +105,9 @@ jobs:
         chmod 600 ~/.ssh/deploy_key
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
-        # Deploy packages and run setup
+        # Update codebase and deploy packages
         scp -i ~/.ssh/deploy_key *.deb "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && ./setup_repo.sh"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && ./setup_repo.sh"
         
         echo "✅ Beta deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
