@@ -5,7 +5,7 @@
 # Build variables
 BINARY_NAME=sc-agent
 BUILD_DIR=build
-MAIN_PATH=./cmd/agent/sc-agent.go
+MAIN_PATH=./cmd/main.go
 VERSION := $(shell git describe --tags --always --dirty)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u '+%Y-%m-%d_%H:%M:%S')

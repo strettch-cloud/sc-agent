@@ -54,6 +54,9 @@ jobs:
         echo "New version: $VERSION"
         echo "Release type: ${{ github.event.inputs.release_type }}"
         
+        # Install packaging library
+        pip3 install packaging
+        
         # Validate version increment
         python3 << EOF
         import sys
@@ -122,55 +125,100 @@ jobs:
         echo "$CHANGELOG" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Build binary
+    - name: Build binaries for multiple architectures
       env:
         VERSION: ${{ needs.validate-version.outputs.version }}
       run: |
+        # Build for amd64
         make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
+        mv build/sc-agent build/sc-agent-linux-amd64
+        
+        # Build for arm64
+        make GOOS=linux GOARCH=arm64 build VERSION=$VERSION
+        mv build/sc-agent build/sc-agent-linux-arm64
+        
+        # Generate checksums
+        cd build
+        sha256sum sc-agent-* > checksums.sha256
+        cat checksums.sha256
 
     - name: Install packaging dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential
+        sudo apt-get install -y ruby ruby-dev build-essential rpm
         sudo gem install fpm
 
-    - name: Build package
+    - name: Build packages for multiple architectures
       env:
         VERSION: ${{ needs.validate-version.outputs.version }}
       run: |
-        # Create staging directory
-        STAGING_DIR="/tmp/sc-agent-build"
-        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+        # Build packages for each architecture
+        for arch in amd64 arm64; do
+          echo "Building package for ${arch}..."
+          
+          # Create staging directory
+          STAGING_DIR="/tmp/sc-agent-build-${arch}"
+          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+          
+          # Copy binary for specific architecture
+          cp build/sc-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-agent"
+          chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent"
+          
+          # Copy scripts and configs
+          cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
+          chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
+          cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
+          cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
-        # Copy files
-        cp build/sc-agent "${STAGING_DIR}/usr/local/bin/"
-        cp packaging/scripts/start-sc-agent.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/start-sc-agent.sh"
-        cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
-        cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
-        cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-updater.service "${STAGING_DIR}/etc/systemd/system/"
+          # Build DEB package
+          fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
+            -a ${arch} \
+            -C "${STAGING_DIR}/" \
+            --description "Strettch Cloud Agent - SSH Key Management and System Monitoring" \
+            --maintainer "engineering@strettch.com" \
+            --url "https://github.com/strettch/sc-agent" \
+            --depends "libc6" --depends "dmidecode" --depends "jq" --depends "curl" \
+            --after-install "packaging/scripts/post-install.sh" \
+            --before-remove "packaging/scripts/pre-remove.sh" \
+            --deb-systemd "packaging/systemd/sc-agent.service" \
+            --deb-systemd "packaging/systemd/sc-agent-update-scheduler.timer"
+          
+          # Build RPM package
+          fpm -s dir -t rpm -n sc-agent -v ${VERSION#v} \
+            -a ${arch} \
+            -C "${STAGING_DIR}/" \
+            --description "Strettch Cloud Agent - SSH Key Management and System Monitoring" \
+            --maintainer "engineering@strettch.com" \
+            --url "https://github.com/strettch/sc-agent" \
+            --depends "glibc" --depends "dmidecode" --depends "jq" --depends "curl" \
+            --after-install "packaging/scripts/post-install.sh" \
+            --before-remove "packaging/scripts/pre-remove.sh"
+        done
         
-        # Build package
-        fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
-          -C "${STAGING_DIR}/" \
-          --description "SC Agent for system monitoring" \
-          --maintainer "engineering@strettch.com" \
-          --url "https://github.com/strettch/sc-agent" \
-          --depends "libc6" --depends "dmidecode" \
-          --after-install "packaging/scripts/post-install.sh" \
-          --before-remove "packaging/scripts/pre-remove.sh"
+        # Generate checksums for packages
+        sha256sum *.deb *.rpm > packages.sha256
+        cat packages.sha256
 
     - name: Deploy to repository
       env:
         REPO_SSH_KEY: ${{ secrets.REPO_SSH_KEY }}
         REPO_HOST: ${{ secrets.REPO_HOST }}
         REPO_USER: ${{ secrets.REPO_USER }}
-        VERSION: ${{ needs.validate-version.outputs.version }}
       run: |
-        chmod +x .github/scripts/deploy-to-repo.sh
-        .github/scripts/deploy-to-repo.sh stable sc-agent_${VERSION#v}_amd64.deb
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "$REPO_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
+        
+        # Update codebase and deploy packages  
+        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
+        
+        echo "✅ Deployment completed successfully!"
+        echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
 
     - name: Create Git tag
       run: |
@@ -191,7 +239,7 @@ jobs:
           
           ### Installation
           ```bash
-          curl -sSL https://sc.repo.cloud.strettch.dev/install.sh | sudo bash
+          curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash
           ```
           
           ### Changes since last release:

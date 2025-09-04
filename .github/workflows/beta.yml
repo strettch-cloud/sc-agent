@@ -2,7 +2,7 @@ name: Beta Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [ dev ]
 
 jobs:
   beta-release:
@@ -74,13 +74,13 @@ jobs:
         
         # Copy files
         cp build/sc-agent "${STAGING_DIR}/usr/local/bin/"
-        cp packaging/scripts/start-sc-agent.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/start-sc-agent.sh"
+        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent"
         cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
         chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
         cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
         cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-updater.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
         # Build package
         fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
@@ -99,8 +99,18 @@ jobs:
         REPO_USER: ${{ secrets.REPO_USER }}
         VERSION: ${{ steps.version.outputs.version }}
       run: |
-        chmod +x .github/scripts/deploy-to-repo.sh
-        .github/scripts/deploy-to-repo.sh beta sc-agent_${VERSION#v}_amd64.deb
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "$REPO_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
+        
+        # Update codebase and deploy packages
+        scp -i ~/.ssh/deploy_key *.deb "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && ./setup_repo.sh"
+        
+        echo "✅ Beta deployment completed successfully!"
+        echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
 
     - name: Create GitHub pre-release
       uses: ncipollo/release-action@v1
@@ -114,7 +124,7 @@ jobs:
           
           ### Installation
           ```bash
-          curl -sSL https://sc.repo.cloud.strettch.dev/install.sh | sudo bash
+          curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash
           ```
           
           ### Changes in this beta release:
