@@ -9,11 +9,11 @@ echo "=== Testing Systemd Configuration ==="
 echo "Checking systemd files..."
 FILES=(
     "packaging/systemd/sc-agent.service"
-    "packaging/systemd/sc-agent-updater.service" 
+    "packaging/systemd/sc-agent-update-scheduler.service" 
     "packaging/systemd/sc-agent-update-scheduler.timer"
     "packaging/scripts/post-install.sh"
     "packaging/scripts/pre-remove.sh"
-    "packaging/scripts/sc-agent-updater.sh"
+    "packaging/scripts/sc-agent-updater-scheduler.sh"
 )
 
 for file in "${FILES[@]}"; do
@@ -50,7 +50,7 @@ echo -e "\nChecking service name consistency..."
 
 # Check timer references correct service
 timer_requires=$(grep "Requires=" packaging/systemd/sc-agent-update-scheduler.timer | cut -d'=' -f2)
-expected_service="sc-agent-updater.service"
+expected_service="sc-agent-update-scheduler.service"
 
 if [[ "$timer_requires" == "$expected_service" ]]; then
     echo "✅ Timer correctly references $expected_service"

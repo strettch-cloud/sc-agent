@@ -28,7 +28,7 @@ chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
 
 cp "config.example.yaml" "${STAGING_DIR}/etc/${PACKAGE_NAME}/config.yaml"
 cp "packaging/systemd/sc-agent.service" "${STAGING_DIR}/etc/systemd/system/"
-cp "packaging/systemd/sc-agent-updater.service" "${STAGING_DIR}/etc/systemd/system/"
+cp "packaging/systemd/sc-agent-update-scheduler.service" "${STAGING_DIR}/etc/systemd/system/"
 cp "packaging/systemd/sc-agent-update-scheduler.timer" "${STAGING_DIR}/etc/systemd/system/"
 
 # Test package creation
