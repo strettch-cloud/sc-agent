@@ -8,7 +8,7 @@ set -e  # Exit immediately if any command fails
 
 # Define service names used throughout the script
 SERVICE_NAME="sc-agent.service"          # Main agent service
-UPDATER_SERVICE="sc-agent-updater.service"  # One-shot updater service
+UPDATER_SERVICE="sc-agent-update-scheduler.service"  # One-shot updater service
 UPDATER_TIMER="sc-agent-update-scheduler.timer"      # Timer that triggers updates
 
 echo "Configuring SC-Agent..."
@@ -74,7 +74,13 @@ fi
 # Start the auto-update timer
 if ! systemctl is-active --quiet "${UPDATER_TIMER}"; then
     echo "Starting auto-update timer..."
-    systemctl start "${UPDATER_TIMER}" || true  # Don't fail if timer can't start
+    if systemctl start "${UPDATER_TIMER}"; then
+        echo "✅ Auto-update timer started successfully"
+    else
+        echo "⚠️  Warning: Auto-update timer failed to start"
+        echo "   Check logs with: journalctl -u ${UPDATER_TIMER}"
+        echo "   Manual start: systemctl start ${UPDATER_TIMER}"
+    fi
 fi
 
 # Print helpful status summary for the user

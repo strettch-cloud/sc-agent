@@ -3,8 +3,8 @@ Description=Strettch Cloud Agent - SSH Key Management and System Monitoring
 Documentation=https://docs.cloud.strettch.com/agents/sc-agent
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=600
-StartLimitBurst=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -14,8 +14,8 @@ ExecReload=/bin/kill -HUP $MAINPID
 ExecStop=/bin/kill -TERM $MAINPID
 
 # Restart configuration
-Restart=always
-RestartSec=10
+Restart=on-failure
+RestartSec=30
 RestartPreventExitStatus=0
 SuccessExitStatus=0 2
 TimeoutStartSec=90
@@ -29,7 +29,7 @@ LimitNPROC=4096
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=no
-ReadWritePaths=/etc/sc-agent /var/log/sc-agent /var/run/sc-agent /root/.ssh /home
+ReadWritePaths=/etc/sc-agent /var/run/sc-agent /root/.ssh /home
 NoNewPrivileges=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
