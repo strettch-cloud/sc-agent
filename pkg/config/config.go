@@ -5,17 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
-
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
 	// Service endpoints
 	MetadataServiceEndpoint string `yaml:"metadata_service_endpoint"`
-	BackendEndpoint         string `yaml:"backend_endpoint"`
 	
 	// Resource identification
 	ResourceID string `yaml:"resource_id"`
@@ -43,18 +40,17 @@ type ConsoleConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		MetadataServiceEndpoint: "http://169.254.169.254/metadata/v1/auth-token",
-		BackendEndpoint:         "https://api.cloud.strettch.com",
 		ResourceID:              detectResourceID(),
 		ResourceIP:              detectResourceIP(),
 		Console: ConsoleConfig{
-			UDPKnockPort:     9999,
-			HTTPNotifyPort:   60500,
+			UDPKnockPort:     60124,
+			HTTPNotifyPort:   60125,
 			MaxPacketSize:    1024,
 			SignatureTimeout: 30,
 		},
 		HTTPTimeout:        30 * time.Second,
 		LogLevel:           "info",
-		KeyCleanupInterval: 30 * time.Second,
+		KeyCleanupInterval: 120 * time.Second,
 		MaxRetries:         3,
 		RetryInterval:      5 * time.Second,
 	}
@@ -63,12 +59,14 @@ func DefaultConfig() *Config {
 func Load() (*Config, error) {
 	cfg := DefaultConfig()
 
+	// Load from config file if specified
 	if configPath := os.Getenv("SC_AGENT_CONFIG"); configPath != "" {
 		if err := cfg.loadFromFile(configPath); err != nil {
 			return nil, fmt.Errorf("failed to load config file %s: %w", configPath, err)
 		}
 	}
 
+	// Override with environment variables
 	cfg.loadFromEnv()
 
 	if err := cfg.validate(); err != nil {
@@ -167,58 +165,25 @@ func (c *Config) loadFromFile(path string) error {
 }
 
 func (c *Config) loadFromEnv() {
-	envMap := map[string]*string{
-		"SC_METADATA_SERVICE_ENDPOINT": &c.MetadataServiceEndpoint,
-		"SC_BACKEND_ENDPOINT":          &c.BackendEndpoint,
-		"SC_RESOURCE_ID":               &c.ResourceID,
-		"SC_RESOURCE_IP":               &c.ResourceIP,
-		"SC_LOG_LEVEL":                 &c.LogLevel,
+	// Only essential environment variables
+	if val := os.Getenv("SC_METADATA_ENDPOINT"); val != "" {
+		c.MetadataServiceEndpoint = val
 	}
-
-	for env, field := range envMap {
-		if val := os.Getenv(env); val != "" {
-			*field = val
-		}
+	
+	
+	// Support explicit resource ID override (for testing)
+	if val := os.Getenv("SC_RESOURCE_ID"); val != "" {
+		c.ResourceID = val
 	}
-
+	
 	// Support legacy VMID env var
 	if val := os.Getenv("SC_VM_ID"); val != "" && c.ResourceID == "" {
 		c.ResourceID = val
 	}
-
-	// Duration values
-	if val := os.Getenv("SC_HTTP_TIMEOUT"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			c.HTTPTimeout = duration
-		}
-	}
-
-	if val := os.Getenv("SC_KEY_CLEANUP_INTERVAL"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			c.KeyCleanupInterval = duration
-		}
-	}
-
-	if val := os.Getenv("SC_RETRY_INTERVAL"); val != "" {
-		if duration, err := time.ParseDuration(val); err == nil {
-			c.RetryInterval = duration
-		}
-	}
-
-	// Integer values
-	intEnvMap := map[string]*int{
-		"SC_MAX_RETRIES":               &c.MaxRetries,
-		"SC_UDP_KNOCK_PORT":            &c.Console.UDPKnockPort,
-		"SC_HTTP_NOTIFY_PORT":          &c.Console.HTTPNotifyPort,
-		"SC_SIGNATURE_TIMEOUT":         &c.Console.SignatureTimeout,
-	}
-
-	for env, field := range intEnvMap {
-		if val := os.Getenv(env); val != "" {
-			if intVal, err := strconv.Atoi(val); err == nil {
-				*field = intVal
-			}
-		}
+	
+	// Optional overrides for debugging
+	if val := os.Getenv("SC_LOG_LEVEL"); val != "" {
+		c.LogLevel = val
 	}
 }
 
@@ -227,9 +192,6 @@ func (c *Config) validate() error {
 		return fmt.Errorf("metadata_service_endpoint cannot be empty")
 	}
 
-	if c.BackendEndpoint == "" {
-		return fmt.Errorf("backend_endpoint cannot be empty")
-	}
 
 	if c.ResourceID == "" {
 		return fmt.Errorf("resource_id cannot be determined: dmidecode failed. Set SC_RESOURCE_ID environment variable")

@@ -1,67 +1,38 @@
 #!/bin/bash
-# SC Agent External Updater
-# This script handles updating the agent safely by stopping it first
+# SC-Agent Auto-Update Script
+# Purpose: Check for and install updates via APT package manager
+# Triggered by: sc-agent-update-scheduler.timer every 2 hours
+# Note: Runs as root via systemd
 
 set -e
 
-PACKAGE_NAME="sc-agent"
-SERVICE_NAME="${PACKAGE_NAME}.service"
-CONFIG_FILE="/etc/${PACKAGE_NAME}/config.yaml"
-LOCK_FILE="/var/lock/${PACKAGE_NAME}-updater.lock"
-
-# Create lock file to prevent concurrent updates
-if ! mkdir "${LOCK_FILE}" 2>/dev/null; then
-    echo "ERROR: Another update is already in progress"
+# Check if running on Debian/Ubuntu (defensive check)
+if [ ! -f /etc/debian_version ]; then
+    echo "Error: Auto-updater only supports Debian/Ubuntu systems"
     exit 1
 fi
 
-# Cleanup function
-cleanup() {
-    rmdir "${LOCK_FILE}" 2>/dev/null || true
-}
-trap cleanup EXIT
+echo "[$(date -u +"%Y-%m-%d %H:%M:%S UTC")] Starting SC-Agent update check..."
 
-echo "Starting SC Agent update..."
+# This downloads the latest package lists from repo.cloud.strettch.dev
+apt-get update
 
-# Check if service is active before stopping
-if systemctl is-active --quiet "${SERVICE_NAME}"; then
-    echo "Stopping ${SERVICE_NAME}..."
-    systemctl stop "${SERVICE_NAME}"
-    SERVICE_WAS_RUNNING=true
-else
-    echo "${SERVICE_NAME} is not running"
-    SERVICE_WAS_RUNNING=false
-fi
-
-# Update package
-echo "Updating package..."
-apt-get update -qq
-apt-get install -y "${PACKAGE_NAME}"
-
-# Validate new configuration (the binary should have --validate-config flag)
-echo "Validating configuration..."
-if ! "/usr/local/bin/${PACKAGE_NAME}" --validate-config "${CONFIG_FILE}"; then
-    echo "ERROR: Configuration validation failed"
-    echo "Update aborted - configuration is invalid"
-    exit 1
-fi
-
-# Start service if it was running before
-if [ "$SERVICE_WAS_RUNNING" = true ]; then
-    echo "Starting ${SERVICE_NAME}..."
-    systemctl start "${SERVICE_NAME}"
+# Attempt to upgrade only the sc-agent package
+# --only-upgrade: Only upgrade if package is already installed (don't install new)
+# -y: Automatic yes to prompts
+if apt-get install -y --only-upgrade sc-agent; then
+    echo "[$(date -u +"%Y-%m-%d %H:%M:%S UTC")] SC-Agent update check completed"
     
-    # Wait a moment and check if it started successfully
-    sleep 2
-    if systemctl is-active --quiet "${SERVICE_NAME}"; then
-        echo "✅ Update completed successfully"
-    else
-        echo "WARNING: Service may not have started properly"
-        echo "Check status with: systemctl status ${SERVICE_NAME}"
-        exit 1
+    # Check if service needs restart after update
+    # Note: APT usually handles this via post-install script, but we double-check
+    if systemctl is-active --quiet sc-agent; then
+        # Service is running - restart to ensure new version is loaded
+        echo "Restarting SC-Agent to apply updates..."
+        systemctl restart sc-agent
+        echo "[$(date -u +"%Y-%m-%d %H:%M:%S UTC")] SC-Agent restarted successfully"
     fi
 else
-    echo "✅ Update completed successfully (service was not running)"
+    echo "[$(date -u +"%Y-%m-%d %H:%M:%S UTC")] No updates available or update failed"
 fi
 
-echo "Update finished at $(date)"
+# Note: Exit code doesn't matter for systemd timer - it will run again in 2 hours

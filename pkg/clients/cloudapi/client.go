@@ -1,4 +1,4 @@
-package backend
+package cloudapi
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
 	"go.uber.org/zap"
 )
 
@@ -33,17 +34,17 @@ type SATKeyResponse struct {
 
 // Client 
 type Client struct {
-	endpoint    string
-	httpClient  *http.Client
-	logger      *zap.Logger
-	resourceID  string
+	httpClient     *http.Client
+	logger         *zap.Logger
+	resourceID     string
+	metadataClient *metadata.Client
 }
 
-// NewClient creates a new backend API client
-func NewClient(endpoint string, resourceID string, timeout time.Duration, logger *zap.Logger) *Client {
+// NewClient creates a new cloud API client
+func NewClient(metadataClient *metadata.Client, resourceID string, timeout time.Duration, logger *zap.Logger) *Client {
 	return &Client{
-		endpoint:   endpoint,
-		resourceID: resourceID,
+		resourceID:     resourceID,
+		metadataClient: metadataClient,
 		httpClient: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -58,14 +59,19 @@ func NewClient(endpoint string, resourceID string, timeout time.Duration, logger
 
 // GetSATKey fetches the SAT public key 
 func (c *Client) GetSATKey(ctx context.Context, authToken string) (string, error) {
-	url := fmt.Sprintf("%s/resource-manager/api/v1/console/public-key/agent", c.endpoint)
+	_, _, cloudAPIUrl, err := c.metadataClient.GetAuthToken(ctx, c.resourceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get cloud API URL: %w", err)
+	}
+	
+	url := fmt.Sprintf("%s/resource-manager/api/v1/console/public-key/agent", cloudAPIUrl)
 
 	req, err := c.createRequest(ctx, url, authToken)
 	if err != nil {
 		return "", err
 	}
 
-	c.logger.Debug("Fetching SAT key from backend", zap.String("url", url))
+	c.logger.Debug("Fetching SAT key", zap.String("url", url))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -83,10 +89,10 @@ func (c *Client) GetSATKey(ctx context.Context, authToken string) (string, error
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.Error("Backend returned error",
+		c.logger.Error("Returned error",
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response", string(body)))
-		return "", fmt.Errorf("backend returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("GetSATKey returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var keyResp SATKeyResponse

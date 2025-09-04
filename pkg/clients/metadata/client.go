@@ -27,8 +27,9 @@ const (
 
 // TokenResponse represents the response from the metadata service
 type TokenResponse struct {
-	Token     string  `json:"token"`
-	PublicKey *string `json:"publicKey,omitempty"`
+	Token       string  `json:"token"`
+	PublicKey   *string `json:"publicKey,omitempty"`
+	CloudAPIUrl string  `json:"cloudAPIUrl"`
 }
 
 // Client handles communication with the metadata service with token caching
@@ -38,10 +39,12 @@ type Client struct {
 	logger        *zap.Logger
 	
 	// Token cache
-	mu            sync.RWMutex
-	cachedToken   string
-	tokenExpiry   time.Time
-	tokenLifetime time.Duration
+	mu              sync.RWMutex
+	cachedToken     string
+	cachedPublicKey string
+	cachedAPIUrl    string
+	tokenExpiry     time.Time
+	tokenLifetime   time.Duration
 }
 
 // NewClient creates a new metadata service client with token caching
@@ -85,7 +88,7 @@ func (c *Client) GetAuthTokenWithRetry(ctx context.Context, resourceID string, m
 			}
 		}
 		
-		token, _, err := c.GetAuthToken(ctx, resourceID)
+		token, _, _, err := c.GetAuthToken(ctx, resourceID)
 		if err == nil {
 			return token, nil
 		}
@@ -101,11 +104,11 @@ func (c *Client) GetAuthTokenWithRetry(ctx context.Context, resourceID string, m
 }
 
 
-// GetAuthTokenWithPublicKey fetches auth token and public key from metadata service
-func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token string, publicKey string, err error) {
-	// Try to use cached token
-	if cachedToken := c.getCachedToken(); cachedToken != "" {
-		return cachedToken, "", nil
+// GetAuthToken fetches auth token, public key, and cloud API URL from metadata service
+func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token string, publicKey string, cloudAPIUrl string, err error) {
+	// Try to use cached values
+	if cachedToken, cachedPublicKey, cachedAPIUrl := c.getCachedValues(); cachedToken != "" {
+		return cachedToken, cachedPublicKey, cachedAPIUrl, nil
 	}
 
 	// Acquire write lock to fetch new token
@@ -114,7 +117,7 @@ func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token str
 
 	// Double-check after acquiring write lock
 	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
-		return c.cachedToken, "", nil
+		return c.cachedToken, c.cachedPublicKey, c.cachedAPIUrl, nil
 	}
 
 	// Build URL 
@@ -122,7 +125,7 @@ func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token str
 	
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create request: %w", err)
+		return "", "", "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set(HeaderAccept, AcceptJSON)
@@ -133,7 +136,7 @@ func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token str
 		c.logger.Error("Failed to fetch auth token with public key", 
 			zap.String("endpoint", url),
 			zap.Error(err))
-		return "", "", fmt.Errorf("failed to fetch auth token: %w", err)
+		return "", "", "", fmt.Errorf("failed to fetch auth token: %w", err)
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -143,53 +146,56 @@ func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token str
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read response: %w", err)
+		return "", "", "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		c.logger.Error("Metadata service error",
 			zap.Int("status", resp.StatusCode),
 			zap.String("body", string(body)))
-		return "", "", fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
+		return "", "", "", fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", "", fmt.Errorf("failed to parse response: %w", err)
+		return "", "", "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if tokenResp.Token == "" {
-		return "", "", fmt.Errorf("empty token in response")
+		return "", "", "", fmt.Errorf("empty token in response")
 	}
-	
-	// Update cache
-	c.cachedToken = tokenResp.Token
-	c.tokenExpiry = time.Now().Add(c.tokenLifetime)
-	
-	c.logger.Debug("Cached new auth token",
-		zap.Time("expires_at", c.tokenExpiry),
-		zap.Duration("lifetime", c.tokenLifetime))
 	
 	publicKeyValue := ""
 	if tokenResp.PublicKey != nil {
 		publicKeyValue = *tokenResp.PublicKey
 	}
+	
+	// Update cache
+	c.cachedToken = tokenResp.Token
+	c.cachedPublicKey = publicKeyValue
+	c.cachedAPIUrl = tokenResp.CloudAPIUrl
+	c.tokenExpiry = time.Now().Add(c.tokenLifetime)
+	
+	c.logger.Debug("Cached new auth values",
+		zap.Time("expires_at", c.tokenExpiry),
+		zap.Duration("lifetime", c.tokenLifetime))
 
-	return tokenResp.Token, publicKeyValue, nil
+	return tokenResp.Token, publicKeyValue, tokenResp.CloudAPIUrl, nil
 }
 
-// getCachedToken returns the cached token if it's still valid
-func (c *Client) getCachedToken() string {
+
+// getCachedValues returns the cached token, publicKey, and cloudAPIUrl if still valid
+func (c *Client) getCachedValues() (string, string, string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	
 	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
-		c.logger.Debug("Using cached auth token", 
+		c.logger.Debug("Using cached auth values", 
 			zap.Duration("ttl", time.Until(c.tokenExpiry)))
-		return c.cachedToken
+		return c.cachedToken, c.cachedPublicKey, c.cachedAPIUrl
 	}
 	
-	return ""
+	return "", "", ""
 }
 
 
