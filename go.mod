@@ -1,4 +1,4 @@
-module github.com/strettch/strettch-cloud/sc-agent
+module github.com/strettch/strettch-cloud/sc-console-agent
 
 go 1.24.3
 

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/connectionretry"
 	"go.uber.org/zap"
 )
 
@@ -19,113 +20,153 @@ const (
 	AcceptJSON        = "application/json"
 	
 	// Default settings
-	defaultTokenCacheLifetime  = 30 * time.Minute
+	defaultCacheDuration       = 30 * time.Minute
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
 	defaultIdleConnTimeout     = 90 * time.Second
 )
 
-// TokenResponse represents the response from the metadata service
-type TokenResponse struct {
+// Info contains metadata service response data
+type Info struct {
+	Token       string
+	PublicKey   string
+	CloudAPIURL string
+}
+
+// Response represents the raw API response
+type Response struct {
 	Token       string  `json:"token"`
 	PublicKey   *string `json:"publicKey,omitempty"`
 	CloudAPIUrl string  `json:"cloudAPIUrl"`
 }
 
-// Client handles communication with the metadata service with token caching
+// Client handles metadata service communication with caching
 type Client struct {
 	endpoint      string
 	httpClient    *http.Client
 	logger        *zap.Logger
+	cacheDuration time.Duration
 	
-	// Token cache
-	mu              sync.RWMutex
-	cachedToken     string
-	cachedPublicKey string
-	cachedAPIUrl    string
-	tokenExpiry     time.Time
-	tokenLifetime   time.Duration
+	// Cache fields
+	mu        sync.RWMutex
+	cache     *Info
+	cacheTime time.Time
 }
 
-// NewClient creates a new metadata service client with token caching
+// NewClient creates a new metadata service client
 func NewClient(endpoint string, timeout time.Duration, logger *zap.Logger) *Client {
+	transport := &http.Transport{
+		MaxIdleConns:        defaultMaxIdleConns,
+		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+		IdleConnTimeout:     defaultIdleConnTimeout,
+	}
+	
 	return &Client{
 		endpoint: endpoint,
 		httpClient: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        defaultMaxIdleConns,
-				MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
-				IdleConnTimeout:     defaultIdleConnTimeout,
-			},
+			Timeout:   timeout,
+			Transport: transport,
 		},
 		logger:        logger,
-		tokenLifetime: defaultTokenCacheLifetime,
+		cacheDuration: defaultCacheDuration,
 	}
 }
 
-
-// GetAuthTokenWithRetry fetches an auth token with retry logic
-func (c *Client) GetAuthTokenWithRetry(ctx context.Context, resourceID string, maxRetries int, retryDelay time.Duration) (string, error) {
-	var lastErr error
-	
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Check context before each attempt
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		
-		// Wait before retry (skip on first attempt)
-		if attempt > 0 {
-			c.logger.Debug("Retrying auth token request",
-				zap.Int("attempt", attempt),
-				zap.Duration("delay", retryDelay))
-			
-			select {
-			case <-time.After(retryDelay):
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		}
-		
-		token, _, _, err := c.GetAuthToken(ctx, resourceID)
-		if err == nil {
-			return token, nil
-		}
-		
-		lastErr = err
-		c.logger.Warn("Auth token request failed", 
-			zap.Error(err), 
-			zap.Int("attempt", attempt+1),
-			zap.Int("max_attempts", maxRetries+1))
+// GetMetadata retrieves metadata (token, public key, and API URL)
+func (c *Client) GetMetadata(ctx context.Context, resourceID string) (*Info, error) {
+	// Check cache first
+	if info := c.getCached(); info != nil {
+		return info, nil
 	}
-	
-	return "", fmt.Errorf("exhausted %d attempts: %w", maxRetries+1, lastErr)
+
+	// Fetch fresh data
+	return c.fetchMetadata(ctx, resourceID)
 }
 
+// GetMetadataWithRetry retrieves metadata with retry logic
+func (c *Client) GetMetadataWithRetry(ctx context.Context, resourceID string, maxAttempts int) (*Info, error) {
+	cfg := retry.Default().WithMaxAttempts(maxAttempts)
+	
+	return retry.Execute(ctx, c.logger, "get-metadata",
+		func(ctx context.Context) (*Info, error) {
+			return c.GetMetadata(ctx, resourceID)
+		}, cfg)
+}
 
-// GetAuthToken fetches auth token, public key, and cloud API URL from metadata service
-func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token string, publicKey string, cloudAPIUrl string, err error) {
-	// Try to use cached values
-	if cachedToken, cachedPublicKey, cachedAPIUrl := c.getCachedValues(); cachedToken != "" {
-		return cachedToken, cachedPublicKey, cachedAPIUrl, nil
-	}
+// GetMetadataForStartup retrieves metadata with infinite retry for startup scenarios
+func (c *Client) GetMetadataForStartup(ctx context.Context, resourceID string) (*Info, error) {
+	// Use default config (infinite retries)
+	return retry.Execute(ctx, c.logger, "get-metadata-startup",
+		func(ctx context.Context) (*Info, error) {
+			return c.GetMetadata(ctx, resourceID)
+		}, nil)
+}
 
-	// Acquire write lock to fetch new token
+// fetchMetadata retrieves fresh metadata from the service
+func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
-		return c.cachedToken, c.cachedPublicKey, c.cachedAPIUrl, nil
+	// Double-check cache after acquiring lock
+	if c.cache != nil && time.Since(c.cacheTime) < c.cacheDuration {
+		return c.cache, nil
 	}
 
-	// Build URL 
+	// Make request
 	url := fmt.Sprintf("%s?includePublicKey=True", c.endpoint)
+	resp, err := c.doRequest(ctx, url, resourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		c.logger.Error("Metadata service error",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(body)))
+		return nil, fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var apiResp Response
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if apiResp.Token == "" {
+		return nil, fmt.Errorf("empty token in response")
+	}
+
+	// Build info object
+	info := &Info{
+		Token:       apiResp.Token,
+		CloudAPIURL: apiResp.CloudAPIUrl,
+	}
+	if apiResp.PublicKey != nil {
+		info.PublicKey = *apiResp.PublicKey
+	}
+
+	// Update cache
+	c.cache = info
+	c.cacheTime = time.Now()
 	
+	c.logger.Debug("Metadata cached",
+		zap.Time("cached_at", c.cacheTime),
+		zap.Duration("ttl", c.cacheDuration))
+
+	return info, nil
+}
+
+// doRequest performs an HTTP GET request
+func (c *Client) doRequest(ctx context.Context, url, resourceID string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set(HeaderAccept, AcceptJSON)
@@ -133,73 +174,45 @@ func (c *Client) GetAuthToken(ctx context.Context, resourceID string) (token str
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.logger.Error("Failed to fetch auth token with public key", 
-			zap.String("endpoint", url),
+		c.logger.Error("Request failed",
+			zap.String("url", url),
 			zap.Error(err))
-		return "", "", "", fmt.Errorf("failed to fetch auth token: %w", err)
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			c.logger.Warn("Failed to close response body", zap.Error(closeErr))
-		}
-	}()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		c.logger.Error("Metadata service error",
-			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)))
-		return "", "", "", fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp TokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", "", "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if tokenResp.Token == "" {
-		return "", "", "", fmt.Errorf("empty token in response")
-	}
-	
-	publicKeyValue := ""
-	if tokenResp.PublicKey != nil {
-		publicKeyValue = *tokenResp.PublicKey
-	}
-	
-	// Update cache
-	c.cachedToken = tokenResp.Token
-	c.cachedPublicKey = publicKeyValue
-	c.cachedAPIUrl = tokenResp.CloudAPIUrl
-	c.tokenExpiry = time.Now().Add(c.tokenLifetime)
-	
-	c.logger.Debug("Cached new auth values",
-		zap.Time("expires_at", c.tokenExpiry),
-		zap.Duration("lifetime", c.tokenLifetime))
-
-	return tokenResp.Token, publicKeyValue, tokenResp.CloudAPIUrl, nil
+	return resp, nil
 }
 
-
-// getCachedValues returns the cached token, publicKey, and cloudAPIUrl if still valid
-func (c *Client) getCachedValues() (string, string, string) {
+// getCached returns cached info if valid
+func (c *Client) getCached() *Info {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	
-	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
-		c.logger.Debug("Using cached auth values", 
-			zap.Duration("ttl", time.Until(c.tokenExpiry)))
-		return c.cachedToken, c.cachedPublicKey, c.cachedAPIUrl
+	if c.cache != nil && time.Since(c.cacheTime) < c.cacheDuration {
+		ttl := c.cacheDuration - time.Since(c.cacheTime)
+		c.logger.Debug("Using cached metadata", zap.Duration("ttl", ttl))
+		return c.cache
 	}
 	
-	return "", "", ""
+	return nil
 }
 
+// SetCacheDuration updates the cache duration
+func (c *Client) SetCacheDuration(duration time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cacheDuration = duration
+}
 
-// Close closes the HTTP client's idle connections
+// ClearCache invalidates the cache
+func (c *Client) ClearCache() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cache = nil
+	c.cacheTime = time.Time{}
+}
+
+// Close releases resources
 func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()
 }
