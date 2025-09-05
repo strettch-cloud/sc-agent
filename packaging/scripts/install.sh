@@ -1,13 +1,13 @@
 #!/bin/bash
 # SC-Agent Installation Script
-# Purpose: Add package repository and install sc-agent via APT
+# Purpose: Add package repository and install sc-console-agent via APT
 # Usage: curl -sSL https://repo.cloud.strettch.dev/install.sh | sudo bash
 
 set -e  # Exit immediately if any command fails
 
 # Repository configuration - can be overridden with environment variable
 PACKAGE_REPO_URL="${SC_REPO_URL:-https://repo.cloud.strettch.dev/console}"
-PACKAGE_NAME="sc-agent"
+PACKAGE_NAME="sc-console-agent"
 
 # Check if running on Debian/Ubuntu (only supported systems)
 if [ ! -f /etc/debian_version ]; then
