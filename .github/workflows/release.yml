@@ -131,15 +131,15 @@ jobs:
       run: |
         # Build for amd64
         make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
-        mv build/sc-agent build/sc-agent-linux-amd64
+        mv build/sc-console-agent build/sc-console-agent-linux-amd64
         
         # Build for arm64
         make GOOS=linux GOARCH=arm64 build VERSION=$VERSION
-        mv build/sc-agent build/sc-agent-linux-arm64
+        mv build/sc-console-agent build/sc-console-agent-linux-arm64
         
         # Generate checksums
         cd build
-        sha256sum sc-agent-* > checksums.sha256
+        sha256sum sc-console-agent-* > checksums.sha256
         cat checksums.sha256
 
     - name: Install packaging dependencies
@@ -157,41 +157,40 @@ jobs:
           echo "Building package for ${arch}..."
           
           # Create staging directory
-          STAGING_DIR="/tmp/sc-agent-build-${arch}"
-          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+          STAGING_DIR="/tmp/sc-console-agent-build-${arch}"
+          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
           
           # Copy binary for specific architecture
-          cp build/sc-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-agent"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent"
+          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-console-agent"
+          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent"
           
           # Copy scripts and configs
-          cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
-          cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
-          cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-          cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
-          cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
+          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent-updater.sh"
+          cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
           # Build DEB package
-          fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
+          fpm -s dir -t deb -n sc-console-agent -v ${VERSION#v} \
             -a ${arch} \
             -C "${STAGING_DIR}/" \
-            --description "Strettch Cloud Agent - SSH Key Management and System Monitoring" \
+            --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
             --maintainer "engineering@strettch.com" \
-            --url "https://github.com/strettch/sc-agent" \
+            --url "https://github.com/strettch/sc-console-agent" \
             --depends "libc6" --depends "dmidecode" --depends "jq" --depends "curl" \
             --after-install "packaging/scripts/post-install.sh" \
             --before-remove "packaging/scripts/pre-remove.sh" \
-            --deb-systemd "packaging/systemd/sc-agent.service" \
-            --deb-systemd "packaging/systemd/sc-agent-update-scheduler.timer"
+            --deb-systemd "packaging/systemd/sc-console-agent.service" \
+            --deb-systemd "packaging/systemd/sc-console-agent-update-scheduler.timer"
           
           # Build RPM package
-          fpm -s dir -t rpm -n sc-agent -v ${VERSION#v} \
+          fpm -s dir -t rpm -n sc-console-agent -v ${VERSION#v} \
             -a ${arch} \
             -C "${STAGING_DIR}/" \
-            --description "Strettch Cloud Agent - SSH Key Management and System Monitoring" \
+            --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
             --maintainer "engineering@strettch.com" \
-            --url "https://github.com/strettch/sc-agent" \
+            --url "https://github.com/strettch/sc-console-agent" \
             --depends "glibc" --depends "dmidecode" --depends "jq" --depends "curl" \
             --after-install "packaging/scripts/post-install.sh" \
             --before-remove "packaging/scripts/pre-remove.sh"
@@ -214,8 +213,8 @@ jobs:
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
         # Update codebase and deploy packages  
-        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
+        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-console-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
         
         echo "✅ Deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"

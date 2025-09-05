@@ -69,25 +69,24 @@ jobs:
         VERSION: ${{ steps.version.outputs.version }}
       run: |
         # Create staging directory
-        STAGING_DIR="/tmp/sc-agent-build"
-        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+        STAGING_DIR="/tmp/sc-console-agent-build"
+        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
         
         # Copy files
-        cp build/sc-agent "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent"
-        cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
-        cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
-        cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
+        cp build/sc-console-agent "${STAGING_DIR}/usr/local/bin/"
+        chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent"
+        cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
+        chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent-updater.sh"
+        cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
         # Build package
-        fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
+        fpm -s dir -t deb -n sc-console-agent -v ${VERSION#v} \
           -C "${STAGING_DIR}/" \
-          --description "SC Agent for system monitoring (Beta Release)" \
+          --description "Strettch Cloud Agent - Enabling secure console access and instance management. (Beta Release)" \
           --maintainer "engineering@strettch.com" \
-          --url "https://github.com/strettch/sc-agent" \
+          --url "https://github.com/strettch/sc-console-agent" \
           --depends "libc6" --depends "dmidecode" \
           --after-install "packaging/scripts/post-install.sh" \
           --before-remove "packaging/scripts/pre-remove.sh"
@@ -106,8 +105,8 @@ jobs:
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
         # Update codebase and deploy packages
-        scp -i ~/.ssh/deploy_key *.deb "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && ./setup_repo.sh"
+        scp -i ~/.ssh/deploy_key *.deb "${REPO_USER}@${REPO_HOST}:/root/sc-console-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && ./setup_repo.sh"
         
         echo "✅ Beta deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
