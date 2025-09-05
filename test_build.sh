@@ -5,7 +5,7 @@ set -e
 
 ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
-PACKAGE_NAME="sc-agent"
+PACKAGE_NAME="sc-console-agent"
 PACKAGE_VERSION=$(git describe --tags --always --dirty)
 
 # Build for Linux (needed for .deb packages)
@@ -16,7 +16,6 @@ GOOS=linux GOARCH=amd64 make build
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build-test"
 rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}/usr/local/bin"
-mkdir -p "${STAGING_DIR}/etc/${PACKAGE_NAME}" 
 mkdir -p "${STAGING_DIR}/etc/systemd/system"
 
 # Copy files
@@ -26,10 +25,9 @@ chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
 cp "packaging/scripts/${PACKAGE_NAME}-updater.sh" "${STAGING_DIR}/usr/local/bin/"
 chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
 
-cp "config.example.yaml" "${STAGING_DIR}/etc/${PACKAGE_NAME}/config.yaml"
-cp "packaging/systemd/sc-agent.service" "${STAGING_DIR}/etc/systemd/system/"
-cp "packaging/systemd/sc-agent-update-scheduler.service" "${STAGING_DIR}/etc/systemd/system/"
-cp "packaging/systemd/sc-agent-update-scheduler.timer" "${STAGING_DIR}/etc/systemd/system/"
+cp "packaging/systemd/sc-console-agent.service" "${STAGING_DIR}/etc/systemd/system/"
+cp "packaging/systemd/sc-console-agent-update-scheduler.service" "${STAGING_DIR}/etc/systemd/system/"
+cp "packaging/systemd/sc-console-agent-update-scheduler.timer" "${STAGING_DIR}/etc/systemd/system/"
 
 # Test package creation
 echo "Testing .deb package creation..."
@@ -39,11 +37,11 @@ fpm -s dir -t deb \
     -C "${STAGING_DIR}/" \
     --description "SC Agent for SSH access management" \
     --maintainer "${GPG_EMAIL}" \
-    --url "https://github.com/strettch/sc-agent" \
+    --url "https://github.com/strettch/sc-console-agent" \
     --depends "systemd" \
     --after-install "packaging/scripts/post-install.sh" \
     --before-remove "packaging/scripts/pre-remove.sh" \
-    --deb-systemd "packaging/systemd/sc-agent.service" \
+    --deb-systemd "packaging/systemd/sc-console-agent.service" \
     --deb-no-default-config-files
 
 echo "✅ Package built successfully: ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb"
