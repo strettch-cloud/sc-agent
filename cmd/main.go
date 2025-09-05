@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/console"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/pipeline"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/console"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/pipeline"
 )
 
 const (
@@ -33,11 +33,11 @@ var (
 )
 
 type Agent struct {
-	config       *config.Config
-	logger       *zap.Logger
-	processor    *pipeline.Processor
-	httpHandler  *console.HTTPHandler
-	httpServer   *http.Server
+	config      *config.Config
+	logger      *zap.Logger
+	processor   *pipeline.Processor
+	httpHandler *console.HTTPHandler
+	httpServer  *http.Server
 }
 
 func main() {
@@ -73,7 +73,6 @@ func main() {
 		os.Exit(1)
 	}
 }
-
 
 func runAgent() error {
 	if os.Getuid() != 0 {
