@@ -1,11 +1,11 @@
 [Unit]
 Description=SC Agent Updater
-Documentation=https://github.com/strettch/sc-agent
+Documentation=https://github.com/strettch/sc-console-agent
 After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/sc-agent-updater.sh
+ExecStart=/usr/local/bin/sc-console-agent-updater.sh
 User=root
 Group=root
 StandardOutput=journal
