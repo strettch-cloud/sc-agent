@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/metadata"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/connectionretry"
 	"go.uber.org/zap"
 )
 
@@ -18,21 +19,28 @@ const (
 	HeaderAuthorization = "Authorization"
 	HeaderUser          = "user"
 	AcceptJSON          = "application/json"
-	
+
 	// Default transport settings
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
 	defaultIdleConnTimeout     = 90 * time.Second
 )
 
-// SATKeyResponse 
-type SATKeyResponse struct {
-	Data struct {
-		SATKey string `json:"satKey"`
-	} `json:"data"`
+// ConsoleKey represents the console access key data
+type ConsoleKey struct {
+	PublicKey   string `json:"publicKey"`
+	Principal   string `json:"principal"`   // Usually "root" for console access
+	RequesterID string `json:"requesterId"` // Email of the user who requested access
+	CreatedAt   string `json:"createdAt"`   // When the key was created (RFC3339)
+	ExpireAt    string `json:"expireAt"`    // When the key expires (RFC3339)
 }
 
-// Client 
+// ConsoleKeyResponse wraps the API response
+type ConsoleKeyResponse struct {
+	Data ConsoleKey `json:"data"`
+}
+
+// Client handles cloud API interactions
 type Client struct {
 	httpClient     *http.Client
 	logger         *zap.Logger
@@ -42,112 +50,75 @@ type Client struct {
 
 // NewClient creates a new cloud API client
 func NewClient(metadataClient *metadata.Client, resourceID string, timeout time.Duration, logger *zap.Logger) *Client {
+	transport := &http.Transport{
+		MaxIdleConns:        defaultMaxIdleConns,
+		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+		IdleConnTimeout:     defaultIdleConnTimeout,
+	}
+	
 	return &Client{
 		resourceID:     resourceID,
 		metadataClient: metadataClient,
 		httpClient: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        defaultMaxIdleConns,
-				MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
-				IdleConnTimeout:     defaultIdleConnTimeout,
-			},
+			Timeout:   timeout,
+			Transport: transport,
 		},
 		logger: logger,
 	}
 }
 
-// GetSATKey fetches the SAT public key 
-func (c *Client) GetSATKey(ctx context.Context, authToken string) (string, error) {
-	_, _, cloudAPIUrl, err := c.metadataClient.GetAuthToken(ctx, c.resourceID)
+// FetchConsoleKey retrieves the console key data
+func (c *Client) FetchConsoleKey(ctx context.Context, authToken string) (*ConsoleKey, error) {
+	cloudAPI, err := c.getCloudAPIEndpoint(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to get cloud API URL: %w", err)
+		return nil, fmt.Errorf("failed to get cloud API endpoint: %w", err)
 	}
+
+	url := fmt.Sprintf("%s/resource-manager/api/v1/console/public-key/agent", cloudAPI)
 	
-	url := fmt.Sprintf("%s/resource-manager/api/v1/console/public-key/agent", cloudAPIUrl)
-
-	req, err := c.createRequest(ctx, url, authToken)
+	resp, err := c.doRequest(ctx, url, authToken)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-
-	c.logger.Debug("Fetching SAT key", zap.String("url", url))
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch SAT key: %w", err)
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			c.logger.Warn("Failed to close response body", zap.Error(closeErr))
-		}
-	}()
+	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		c.logger.Error("Returned error",
-			zap.Int("status_code", resp.StatusCode),
-			zap.String("response", string(body)))
-		return "", fmt.Errorf("GetSATKey returned status %d: %s", resp.StatusCode, string(body))
+		c.logger.Error("API error",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(body)))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var keyResp SATKeyResponse
-	if err := json.Unmarshal(body, &keyResp); err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	var response ConsoleKeyResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	if keyResp.Data.SATKey == "" {
-		return "", fmt.Errorf("empty SAT key in response")
+	if response.Data.PublicKey == "" {
+		return nil, fmt.Errorf("empty public key in response")
 	}
 
-	c.logger.Debug("Successfully fetched SAT key")
-	return keyResp.Data.SATKey, nil
+	c.logger.Debug("Console key fetched successfully")
+	return &response.Data, nil
 }
 
-// GetSATKeyWithRetry fetches a SAT key with retry logic
-func (c *Client) GetSATKeyWithRetry(ctx context.Context, authToken string, maxRetries int, retryDelay time.Duration) (string, error) {
-	var lastErr error
+// FetchConsoleKeyWithRetry retrieves console key with retry logic
+func (c *Client) FetchConsoleKeyWithRetry(ctx context.Context, authToken string, maxAttempts int) (*ConsoleKey, error) {
+	cfg := retry.Default().WithMaxAttempts(maxAttempts)
 	
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// Check context before each attempt
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		
-		// Wait before retry (skip on first attempt)
-		if attempt > 0 {
-			c.logger.Debug("Retrying SAT key request",
-				zap.Int("attempt", attempt),
-				zap.Duration("delay", retryDelay))
-			
-			select {
-			case <-time.After(retryDelay):
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		}
-		
-		satKey, err := c.GetSATKey(ctx, authToken)
-		if err == nil {
-			return satKey, nil
-		}
-		
-		lastErr = err
-		c.logger.Warn("SAT key request failed", 
-			zap.Error(err), 
-			zap.Int("attempt", attempt+1),
-			zap.Int("max_attempts", maxRetries+1))
-	}
-	
-	return "", fmt.Errorf("exhausted %d attempts: %w", maxRetries+1, lastErr)
+	return retry.Execute(ctx, c.logger, "fetch-console-key", 
+		func(ctx context.Context) (*ConsoleKey, error) {
+			return c.FetchConsoleKey(ctx, authToken)
+		}, cfg)
 }
 
-// createRequest builds the HTTP request
-func (c *Client) createRequest(ctx context.Context, url, authToken string) (*http.Request, error) {
+// doRequest performs an HTTP GET request with auth
+func (c *Client) doRequest(ctx context.Context, url, authToken string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -156,10 +127,42 @@ func (c *Client) createRequest(ctx context.Context, url, authToken string) (*htt
 	req.Header.Set(HeaderAuthorization, "Bearer "+authToken)
 	req.Header.Set(HeaderAccept, AcceptJSON)
 
-	return req, nil
+	c.logger.Debug("Executing request", zap.String("url", url))
+	
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	return resp, nil
 }
 
-// Close closes the HTTP client's idle connections
+// getCloudAPIEndpoint retrieves the cloud API URL with retry
+func (c *Client) getCloudAPIEndpoint(ctx context.Context) (string, error) {
+	// Try cached value first
+	info, err := c.metadataClient.GetMetadata(ctx, c.resourceID)
+	if err == nil {
+		return info.CloudAPIURL, nil
+	}
+	
+	c.logger.Debug("Cache miss, fetching with retry", zap.Error(err))
+	
+	// Use limited retries for runtime operations
+	cfg := retry.Default().WithMaxAttempts(5)
+	
+	info, err = retry.Execute(ctx, c.logger, "get-cloud-api-endpoint",
+		func(ctx context.Context) (*metadata.Info, error) {
+			return c.metadataClient.GetMetadata(ctx, c.resourceID)
+		}, cfg)
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to get metadata: %w", err)
+	}
+	
+	return info.CloudAPIURL, nil
+}
+
+// Close releases resources
 func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()
 }

@@ -11,11 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/pipeline"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/console"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/pipeline"
 )
 
 const (
@@ -33,11 +32,10 @@ var (
 )
 
 type Agent struct {
-	config       *config.Config
-	logger       *zap.Logger
-	processor    *pipeline.Processor
-	httpHandler  *console.HTTPHandler
-	httpServer   *http.Server
+	config      *config.Config
+	logger      *zap.Logger
+	processor   *pipeline.Processor
+	httpServer  *http.Server
 }
 
 func main() {
@@ -73,7 +71,6 @@ func main() {
 		os.Exit(1)
 	}
 }
-
 
 func runAgent() error {
 	if os.Getuid() != 0 {
@@ -120,13 +117,9 @@ func (a *Agent) initialize() error {
 		return fmt.Errorf("processor start failed: %w", err)
 	}
 
-	if a.httpHandler, err = console.NewHTTPHandler(cfg, a.logger); err != nil {
-		return fmt.Errorf("HTTP handler creation failed: %w", err)
-	}
 
 	a.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Console.HTTPNotifyPort),
-		Handler:           a.httpHandler,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
@@ -165,11 +158,6 @@ func (a *Agent) shutdown() error {
 
 	if err := a.processor.Stop(); err != nil {
 		a.logger.Error("Processor shutdown failed", zap.Error(err))
-		shutdownErr = err
-	}
-
-	if err := a.httpHandler.Close(); err != nil {
-		a.logger.Error("HTTP handler close failed", zap.Error(err))
 		shutdownErr = err
 	}
 
