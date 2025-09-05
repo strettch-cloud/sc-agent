@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/crypto"
 	"go.uber.org/zap"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/crypto"
 )
 
 const (
@@ -31,10 +31,10 @@ type UDPListener struct {
 	verifier  *crypto.SignatureVerifier
 	conn      *net.UDPConn
 	eventChan chan UDPKnockEvent
-	
+
 	ctx    context.Context
 	cancel context.CancelFunc
-	
+
 	publicKeyHex string
 	mu           sync.RWMutex
 }
@@ -77,13 +77,13 @@ func (ul *UDPListener) Start() error {
 func (ul *UDPListener) Stop() error {
 	ul.logger.Info("Stopping UDP knock listener")
 	ul.cancel()
-	
+
 	if ul.conn != nil {
 		if err := ul.conn.Close(); err != nil {
 			return fmt.Errorf("failed to close UDP connection: %w", err)
 		}
 	}
-	
+
 	close(ul.eventChan)
 	return nil
 }
@@ -94,25 +94,25 @@ func (ul *UDPListener) GetEventChannel() <-chan UDPKnockEvent {
 
 func (ul *UDPListener) processPackets() {
 	buffer := make([]byte, ul.config.Console.MaxPacketSize)
-	
+
 	for {
 		select {
 		case <-ul.ctx.Done():
 			return
 		default:
 		}
-		
+
 		// Timeout allows graceful shutdown
 		if err := ul.conn.SetReadDeadline(time.Now().Add(udpReadTimeout)); err != nil {
 			ul.logger.Warn("Failed to set read deadline", zap.Error(err))
 		}
-		
+
 		n, addr, err := ul.conn.ReadFromUDP(buffer)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			
+
 			select {
 			case <-ul.ctx.Done():
 				return
@@ -139,7 +139,7 @@ func (ul *UDPListener) handlePacket(packet []byte, sourceIP string) {
 	ul.mu.RLock()
 	verifier := ul.verifier
 	ul.mu.RUnlock()
-	
+
 	if verifier == nil {
 		ul.logger.Debug("No public key configured yet, ignoring packet",
 			zap.String("source_ip", sourceIP))
@@ -179,24 +179,24 @@ func (ul *UDPListener) UpdatePublicKey(publicKeyHex string) error {
 	if publicKeyHex == "" {
 		return fmt.Errorf("empty public key")
 	}
-	
+
 	ul.mu.Lock()
 	defer ul.mu.Unlock()
-	
+
 	// Only update if key has changed
 	if ul.publicKeyHex == publicKeyHex {
 		return nil
 	}
-	
+
 	verifier, err := crypto.NewSignatureVerifier(publicKeyHex)
 	if err != nil {
 		return fmt.Errorf("failed to create verifier with new key: %w", err)
 	}
-	
+
 	ul.verifier = verifier
 	ul.publicKeyHex = publicKeyHex
 	ul.logger.Info("Updated UDP knock public key",
 		zap.String("public_key_hex", publicKeyHex))
-	
+
 	return nil
 }

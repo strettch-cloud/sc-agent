@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/cloudapi"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/metadata"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/ssh"
 	"go.uber.org/zap"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/cloudapi"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/ssh"
 )
 
 // HTTPHandler handles legacy HTTP-based console notifications
@@ -20,7 +20,7 @@ type HTTPHandler struct {
 	config         *config.Config
 	logger         *zap.Logger
 	metadataClient *metadata.Client
-	cloudAPIClient  *cloudapi.Client
+	cloudAPIClient *cloudapi.Client
 	keyManager     *ssh.KeyManager
 }
 
@@ -33,7 +33,7 @@ type NotifyPayload struct {
 func NewHTTPHandler(cfg *config.Config, logger *zap.Logger) (*HTTPHandler, error) {
 	metadataClient := metadata.NewClient(cfg.MetadataServiceEndpoint, cfg.HTTPTimeout, logger)
 	cloudAPIClient := cloudapi.NewClient(metadataClient, cfg.ResourceID, cfg.HTTPTimeout, logger)
-	
+
 	keyManager, err := ssh.NewKeyManager(logger)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func NewHTTPHandler(cfg *config.Config, logger *zap.Logger) (*HTTPHandler, error
 		config:         cfg,
 		logger:         logger,
 		metadataClient: metadataClient,
-		cloudAPIClient:  cloudAPIClient,
+		cloudAPIClient: cloudAPIClient,
 		keyManager:     keyManager,
 	}, nil
 }
