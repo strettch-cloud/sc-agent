@@ -29,7 +29,12 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Validate version format
+    - name: Set up Python (for version validation)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Validate version format and increment
       id: validate
       run: |
         VERSION="${{ github.event.inputs.version }}"
@@ -55,7 +60,7 @@ jobs:
         echo "Release type: ${{ github.event.inputs.release_type }}"
         
         # Install packaging library
-        pip3 install packaging
+        python3 -m pip install --user packaging
         
         # Validate version increment
         python3 << EOF
@@ -101,20 +106,10 @@ jobs:
         fetch-depth: 0
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: '1.21'
-
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
+        cache: true
 
     - name: Generate comprehensive changelog
       id: changelog
@@ -131,22 +126,31 @@ jobs:
       run: |
         # Build for amd64
         make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
-        mv build/sc-agent build/sc-agent-linux-amd64
+        mv build/sc-console-agent build/sc-console-agent-linux-amd64
         
         # Build for arm64
         make GOOS=linux GOARCH=arm64 build VERSION=$VERSION
-        mv build/sc-agent build/sc-agent-linux-arm64
+        mv build/sc-console-agent build/sc-console-agent-linux-arm64
         
         # Generate checksums
         cd build
-        sha256sum sc-agent-* > checksums.sha256
+        sha256sum sc-console-agent-* > checksums.sha256
         cat checksums.sha256
 
     - name: Install packaging dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential rpm
-        sudo gem install fpm
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: ruby ruby-dev build-essential rpm
+        version: 1.0
+
+    - name: Setup Ruby and install FPM
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: false
+        
+    - name: Install FPM gem
+      run: gem install fpm --no-document
 
     - name: Build packages for multiple architectures
       env:
@@ -157,41 +161,40 @@ jobs:
           echo "Building package for ${arch}..."
           
           # Create staging directory
-          STAGING_DIR="/tmp/sc-agent-build-${arch}"
-          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+          STAGING_DIR="/tmp/sc-console-agent-build-${arch}"
+          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
           
           # Copy binary for specific architecture
-          cp build/sc-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-agent"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent"
+          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-console-agent"
+          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent"
           
           # Copy scripts and configs
-          cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
-          cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
-          cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-          cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
-          cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
+          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent-updater.sh"
+          cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
           # Build DEB package
-          fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
+          fpm -s dir -t deb -n sc-console-agent -v ${VERSION#v} \
             -a ${arch} \
             -C "${STAGING_DIR}/" \
-            --description "Strettch Cloud Agent - SSH Key Management and System Monitoring" \
+            --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
             --maintainer "engineering@strettch.com" \
-            --url "https://github.com/strettch/sc-agent" \
+            --url "https://github.com/strettch/sc-console-agent" \
             --depends "libc6" --depends "dmidecode" --depends "jq" --depends "curl" \
             --after-install "packaging/scripts/post-install.sh" \
             --before-remove "packaging/scripts/pre-remove.sh" \
-            --deb-systemd "packaging/systemd/sc-agent.service" \
-            --deb-systemd "packaging/systemd/sc-agent-update-scheduler.timer"
+            --deb-systemd "packaging/systemd/sc-console-agent.service" \
+            --deb-systemd "packaging/systemd/sc-console-agent-update-scheduler.timer"
           
           # Build RPM package
-          fpm -s dir -t rpm -n sc-agent -v ${VERSION#v} \
+          fpm -s dir -t rpm -n sc-console-agent -v ${VERSION#v} \
             -a ${arch} \
             -C "${STAGING_DIR}/" \
-            --description "Strettch Cloud Agent - SSH Key Management and System Monitoring" \
+            --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
             --maintainer "engineering@strettch.com" \
-            --url "https://github.com/strettch/sc-agent" \
+            --url "https://github.com/strettch/sc-console-agent" \
             --depends "glibc" --depends "dmidecode" --depends "jq" --depends "curl" \
             --after-install "packaging/scripts/post-install.sh" \
             --before-remove "packaging/scripts/pre-remove.sh"
@@ -214,8 +217,8 @@ jobs:
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
         # Update codebase and deploy packages  
-        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
+        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-console-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
         
         echo "✅ Deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
