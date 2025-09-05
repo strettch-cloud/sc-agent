@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/metadata"
 	"go.uber.org/zap"
 )
 
@@ -18,21 +18,21 @@ const (
 	HeaderAuthorization = "Authorization"
 	HeaderUser          = "user"
 	AcceptJSON          = "application/json"
-	
+
 	// Default transport settings
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
 	defaultIdleConnTimeout     = 90 * time.Second
 )
 
-// SATKeyResponse 
+// SATKeyResponse
 type SATKeyResponse struct {
 	Data struct {
 		SATKey string `json:"satKey"`
 	} `json:"data"`
 }
 
-// Client 
+// Client
 type Client struct {
 	httpClient     *http.Client
 	logger         *zap.Logger
@@ -57,13 +57,13 @@ func NewClient(metadataClient *metadata.Client, resourceID string, timeout time.
 	}
 }
 
-// GetSATKey fetches the SAT public key 
+// GetSATKey fetches the SAT public key
 func (c *Client) GetSATKey(ctx context.Context, authToken string) (string, error) {
 	_, _, cloudAPIUrl, err := c.metadataClient.GetAuthToken(ctx, c.resourceID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get cloud API URL: %w", err)
 	}
-	
+
 	url := fmt.Sprintf("%s/resource-manager/api/v1/console/public-key/agent", cloudAPIUrl)
 
 	req, err := c.createRequest(ctx, url, authToken)
@@ -111,38 +111,38 @@ func (c *Client) GetSATKey(ctx context.Context, authToken string) (string, error
 // GetSATKeyWithRetry fetches a SAT key with retry logic
 func (c *Client) GetSATKeyWithRetry(ctx context.Context, authToken string, maxRetries int, retryDelay time.Duration) (string, error) {
 	var lastErr error
-	
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Check context before each attempt
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		
+
 		// Wait before retry (skip on first attempt)
 		if attempt > 0 {
 			c.logger.Debug("Retrying SAT key request",
 				zap.Int("attempt", attempt),
 				zap.Duration("delay", retryDelay))
-			
+
 			select {
 			case <-time.After(retryDelay):
 			case <-ctx.Done():
 				return "", ctx.Err()
 			}
 		}
-		
+
 		satKey, err := c.GetSATKey(ctx, authToken)
 		if err == nil {
 			return satKey, nil
 		}
-		
+
 		lastErr = err
-		c.logger.Warn("SAT key request failed", 
-			zap.Error(err), 
+		c.logger.Warn("SAT key request failed",
+			zap.Error(err),
 			zap.Int("attempt", attempt+1),
 			zap.Int("max_attempts", maxRetries+1))
 	}
-	
+
 	return "", fmt.Errorf("exhausted %d attempts: %w", maxRetries+1, lastErr)
 }
 

@@ -1,29 +1,29 @@
 #!/bin/bash
 # SC-Agent Post-Installation Script
 # Purpose: Configure directories, permissions, and start services after package installation
-# Triggered by: APT package manager automatically after installing sc-agent.deb
+# Triggered by: APT package manager automatically after installing sc-console-agent.deb
 # Note: This script runs as root during package installation
 
 set -e  # Exit immediately if any command fails
 
 # Define service names used throughout the script
-SERVICE_NAME="sc-agent.service"          # Main agent service
-UPDATER_SERVICE="sc-agent-update-scheduler.service"  # One-shot updater service
-UPDATER_TIMER="sc-agent-update-scheduler.timer"      # Timer that triggers updates
+SERVICE_NAME="sc-console-agent.service"          # Main agent service
+UPDATER_SERVICE="sc-console-agent-update-scheduler.service"  # One-shot updater service
+UPDATER_TIMER="sc-console-agent-update-scheduler.timer"      # Timer that triggers updates
 
 echo "Configuring SC-Agent..."
 
 # Create necessary directories for agent operation
 # mkdir -p: create parent directories as needed, no error if exists
 echo "Creating required directories..."
-mkdir -p /var/run/sc-agent      # Directory for runtime files (PID, sockets)
-mkdir -p /etc/sc-agent          # Directory for configuration files
+mkdir -p /var/run/sc-console-agent      # Directory for runtime files (PID, sockets)
+mkdir -p /etc/sc-console-agent          # Directory for configuration files
 
 # Set secure permissions on directories
 # 750 = rwxr-x--- (owner: read/write/execute, group: read/execute, others: none)
 # 755 = rwxr-xr-x (owner: read/write/execute, group & others: read/execute)
-chmod 750 /var/run/sc-agent     # Runtime files should be private
-chmod 755 /etc/sc-agent         # Config can be world-readable
+chmod 750 /var/run/sc-console-agent     # Runtime files should be private
+chmod 755 /etc/sc-console-agent         # Config can be world-readable
 
 # Reload systemd to recognize new service files that package installed
 echo "Reloading systemd configuration..."
@@ -92,8 +92,8 @@ echo "Service status: $(systemctl is-active ${SERVICE_NAME})"  # Show running/de
 echo "Auto-update: $(systemctl is-active ${UPDATER_TIMER})"   # Show timer active status
 echo ""
 echo "Useful commands:"
-echo "  Check status:  systemctl status sc-agent"
-echo "  View logs:     journalctl -u sc-agent -f"
-echo "  Configuration: /etc/sc-agent/config.yaml"
-echo "  Manual update: systemctl start sc-agent-updater"
+echo "  Check status:  systemctl status sc-console-agent"
+echo "  View logs:     journalctl -u sc-console-agent -f"
+echo "  Configuration: /etc/sc-console-agent/config.yaml"
+echo "  Manual update: systemctl start sc-console-agent-updater"
 echo ""
