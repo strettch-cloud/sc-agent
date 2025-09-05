@@ -4,8 +4,8 @@ tmp_dir = "tmp"
 
 [build]
 args_bin = []
-bin = "./tmp/sc-agent"
-cmd = "go build -o ./tmp/sc-agent cmd/main.go"
+bin = "./tmp/sc-console-agent"
+cmd = "go build -o ./tmp/sc-console-agent cmd/main.go"
 delay = 1000
 exclude_dir = ["assets", "tmp", "vendor", "testdata"]
 exclude_file = []
