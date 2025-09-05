@@ -1,15 +1,15 @@
 #!/bin/bash
 # SC-Agent Pre-Removal Script
 # Purpose: Clean up services and files before package removal
-# Triggered by: APT package manager before removing/upgrading sc-agent
+# Triggered by: APT package manager before removing/upgrading sc-console-agent
 # Parameter $1: "purge" for complete removal, "remove" for keeping configs, "upgrade" for updates
 
 set -e  # Exit immediately if any command fails
 
 # Define service names that need to be stopped/disabled
-SERVICE_NAME="sc-agent.service"
-UPDATER_SERVICE="sc-agent-update-scheduler.service"
-UPDATER_TIMER="sc-agent-update-scheduler.timer"
+SERVICE_NAME="sc-console-agent.service"
+UPDATER_SERVICE="sc-console-agent-update-scheduler.service"
+UPDATER_TIMER="sc-console-agent-update-scheduler.timer"
 
 # Check the type of removal being performed
 # "purge" = complete removal including configs (apt-get purge)
@@ -31,8 +31,8 @@ if [ "$1" = "purge" ] || [ "$1" = "0" ]; then
     
     # Remove all configuration and runtime files (purge only)
     echo "Removing configuration and runtime files..."
-    rm -rf /etc/sc-agent        # Delete all config files
-    rm -rf /var/run/sc-agent    # Delete runtime/PID files
+    rm -rf /etc/sc-console-agent        # Delete all config files
+    rm -rf /var/run/sc-console-agent    # Delete runtime/PID files
     
     # Remove systemd service files if they exist
     rm -f /etc/systemd/system/${SERVICE_NAME}
