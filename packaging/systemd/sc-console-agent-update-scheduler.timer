@@ -1,7 +1,7 @@
 [Unit]
 Description=SC-Agent Auto-Update Timer
-Documentation=https://docs.cloud.strettch.com/agents/sc-agent
-Requires=sc-agent-update-scheduler.service
+Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+Requires=sc-console-agent-update-scheduler.service
 
 [Timer]
 # Check for updates every 2 hours
