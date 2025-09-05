@@ -20,20 +20,10 @@ jobs:
         fetch-depth: 0  # Fetch full history for changelog generation
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: '1.21'
-
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
+        cache: true  # Built-in caching
 
     - name: Generate beta version
       id: version
@@ -42,6 +32,13 @@ jobs:
         VERSION=$(.github/scripts/generate-version.sh beta)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Generated beta version: $VERSION"
+
+    - name: Create Git tag first
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a ${{ steps.version.outputs.version }} -m "Beta release ${{ steps.version.outputs.version }}"
+        # Don't push yet, just create locally for the build
 
     - name: Generate changelog
       id: changelog
@@ -58,39 +55,51 @@ jobs:
       run: |
         make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
 
-    - name: Install packaging dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential
-        sudo gem install fpm
+    - name: Install packaging dependencies 
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: ruby ruby-dev build-essential
+        version: 1.0
+
+    - name: Setup Ruby and install FPM
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: false
+    
+    - name: Install FPM gem
+      run: gem install fpm --no-document
 
     - name: Build package
       env:
         VERSION: ${{ steps.version.outputs.version }}
       run: |
         # Create staging directory
-        STAGING_DIR="/tmp/sc-agent-build"
-        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+        STAGING_DIR="/tmp/sc-console-agent-build"
+        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
         
         # Copy files
-        cp build/sc-agent "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent"
-        cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
-        cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
-        cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
+        cp build/sc-console-agent "${STAGING_DIR}/usr/local/bin/"
+        chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent"
+        cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
+        chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent-updater.sh"
+        cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+        cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
         # Build package
-        fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
+        fpm -s dir -t deb -n sc-console-agent -v ${VERSION#v} \
           -C "${STAGING_DIR}/" \
-          --description "SC Agent for system monitoring (Beta Release)" \
+          --description "Strettch Cloud Agent - Enabling secure console access and instance management. (Beta Release)" \
           --maintainer "engineering@strettch.com" \
-          --url "https://github.com/strettch/sc-agent" \
+          --url "https://github.com/strettch/sc-console-agent" \
           --depends "libc6" --depends "dmidecode" \
           --after-install "packaging/scripts/post-install.sh" \
           --before-remove "packaging/scripts/pre-remove.sh"
+
+    - name: Push Git tag
+      run: |
+        git push origin ${{ steps.version.outputs.version }}
 
     - name: Deploy to repository
       env:
@@ -105,9 +114,9 @@ jobs:
         chmod 600 ~/.ssh/deploy_key
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
-        # Update codebase and deploy packages
-        scp -i ~/.ssh/deploy_key *.deb "${REPO_USER}@${REPO_HOST}:/root/sc-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-agent && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && ./setup_repo.sh"
+        # Update codebase on server and build/publish from source
+        # We must build on the server to get the new code changes
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && git fetch --tags && ./setup_repo.sh"
         
         echo "✅ Beta deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
