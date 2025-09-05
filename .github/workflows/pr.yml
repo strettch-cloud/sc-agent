@@ -80,5 +80,5 @@ jobs:
     - name: Verify binary
       run: |
         ls -la build/
-        file build/sc-agent
-        ./build/sc-agent -v
+        file build/sc-console-agent
+        ./build/sc-console-agent -v
