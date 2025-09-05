@@ -1,6 +1,6 @@
 # SC-Agent
 
-Strettch Cloud Agent for SSH key management and system monitoring.
+[Strettch Cloud Console Agent] Securely bridging your VMs with the cloud control plane for real-time console access.
 
 ## Installation
 
@@ -14,65 +14,65 @@ curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash
 
 ### Check service status
 ```bash
-sudo systemctl status sc-agent
+sudo systemctl status sc-console-agent
 ```
 
 ### Start/stop service
 ```bash
-sudo systemctl start sc-agent
-sudo systemctl stop sc-agent
-sudo systemctl restart sc-agent
+sudo systemctl start sc-console-agent
+sudo systemctl stop sc-console-agent
+sudo systemctl restart sc-console-agent
 ```
 
 ### Enable/disable service (start on boot)
 ```bash
-sudo systemctl enable sc-agent   # Enable auto-start on boot
-sudo systemctl disable sc-agent  # Disable auto-start
+sudo systemctl enable sc-console-agent   # Enable auto-start on boot
+sudo systemctl disable sc-console-agent  # Disable auto-start
 ```
 
 ### View logs
 ```bash
-sudo journalctl -u sc-agent -f          # Follow live logs
-sudo journalctl -u sc-agent --since=1h  # Last hour logs
+sudo journalctl -u sc-console-agent -f          # Follow live logs
+sudo journalctl -u sc-console-agent --since=1h  # Last hour logs
 ```
 
 ## Auto-Update
 
 ### Check auto-update timer status
 ```bash
-sudo systemctl status sc-agent-update-scheduler.timer
+sudo systemctl status sc-console-agent-update-scheduler.timer
 ```
 
 ### Manual update
 ```bash
-sudo systemctl start sc-agent-updater
+sudo systemctl start sc-console-agent-updater
 ```
 
 ### Auto-update logs
 ```bash
-sudo journalctl -u sc-agent-updater -f
-sudo journalctl -u sc-agent-update-scheduler.timer
+sudo journalctl -u sc-console-agent-updater -f
+sudo journalctl -u sc-console-agent-update-scheduler.timer
 ```
 
 ## Configuration
 
-Configuration file: `/etc/sc-agent/config.yaml`
+Configuration file: `/etc/sc-console-agent/config.yaml`
 
 ```bash
-sudo nano /etc/sc-agent/config.yaml
-sudo systemctl restart sc-agent  # Restart to apply changes
+sudo nano /etc/sc-console-agent/config.yaml
+sudo systemctl restart sc-console-agent  # Restart to apply changes
 ```
 
 ## Removal
 
 ### Remove package (keep configuration)
 ```bash
-sudo apt-get remove sc-agent
+sudo apt-get remove sc-console-agent
 ```
 
 ### Complete removal (remove package and all configurations)
 ```bash
-sudo apt-get purge sc-agent
+sudo apt-get purge sc-console-agent
 ```
 
 ## Development
