@@ -2,14 +2,14 @@
 # Repository Setup Script
 # Purpose: Build packages and set up APT repository on the repository server
 # Usage: ./setup_repo.sh (run on repository server)
-# Location: This script runs on the repository server at /root/sc-agent/
+# Location: This script runs on the repository server at /root/sc-console-agent/
 
 set -e
 
 # --- Configuration ---
 ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
-PACKAGE_NAME="sc-agent"
+PACKAGE_NAME="sc-console-agent"
 PACKAGE_VERSION=$(git describe --tags --always --dirty)
 REPO_DOMAIN="repo.cloud.strettch.dev"  # Production repository domain
 DISTRIBUTIONS="focal jammy noble"  # Ubuntu versions to support
@@ -23,8 +23,26 @@ UPDATER_TIMER="packaging/systemd/${PACKAGE_NAME}-update-scheduler.timer"
 UPDATER_SCRIPT="packaging/scripts/${PACKAGE_NAME}-updater.sh"
 POSTINSTALL_SCRIPT="packaging/scripts/post-install.sh"
 PREREMOVE_SCRIPT="packaging/scripts/pre-remove.sh"
-CONFIG_FILE="config.example.yaml"
 # ---
+
+# Check for required tools first
+for tool in fpm aptly gpg; do
+    if ! command -v $tool &> /dev/null; then
+        echo "Error: $tool is not installed" >&2
+        exit 1
+    fi
+done
+
+echo "--- [Step 1/7] Cleaning up previous repository publications..."
+for dist in ${DISTRIBUTIONS}; do
+    sudo aptly publish drop ${dist} 2>/dev/null || true
+done
+sudo aptly repo remove sc-console-agent-repo ${PACKAGE_NAME} 2>/dev/null || echo "No package to remove. Continuing."
+sudo aptly db cleanup
+rm -f ${PACKAGE_NAME}_*.deb
+
+echo "--- [Step 2/7] Building Go binary via Makefile..."
+GOOS=linux GOARCH=amd64 make build
 
 # --- Pre-flight Checks ---
 echo "Checking required files..."
@@ -35,7 +53,6 @@ required_files=(
     "$UPDATER_SCRIPT"
     "$POSTINSTALL_SCRIPT"
     "$PREREMOVE_SCRIPT"
-    "$CONFIG_FILE"
     "build/${PACKAGE_NAME}"
 )
 
@@ -46,31 +63,12 @@ for file in "${required_files[@]}"; do
         exit 1
     fi
 done
-
-# Check for required tools
-for tool in fpm aptly gpg; do
-    if ! command -v $tool &> /dev/null; then
-        echo "Error: $tool is not installed" >&2
-        exit 1
-    fi
-done
 # ---
-
-echo "--- [Step 1/7] Cleaning up previous repository publications..."
-for dist in ${DISTRIBUTIONS}; do
-    sudo aptly publish drop ${dist} 2>/dev/null || true
-done
-sudo aptly repo remove sc-agent-repo ${PACKAGE_NAME} 2>/dev/null || echo "No package to remove. Continuing."
-sudo aptly db cleanup
-rm -f ${PACKAGE_NAME}_*.deb
-
-echo "--- [Step 2/7] Building Go binary via Makefile..."
-GOOS=linux GOARCH=amd64 make build
 
 echo "--- [Step 3/7] Preparing packaging assets..."
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/${PACKAGE_NAME}" "${STAGING_DIR}/etc/systemd/system"
+mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
 
 # Copy files
 cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/local/bin/"
@@ -79,7 +77,6 @@ chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
 cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/local/bin/"
 chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
 
-cp "${CONFIG_FILE}" "${STAGING_DIR}/etc/${PACKAGE_NAME}/config.yaml"
 cp "${SERVICE_FILE}" "${STAGING_DIR}/etc/systemd/system/"
 cp "${UPDATER_SERVICE}" "${STAGING_DIR}/etc/systemd/system/"
 cp "${UPDATER_TIMER}" "${STAGING_DIR}/etc/systemd/system/"
@@ -91,19 +88,19 @@ fpm -s dir -t deb \
     -C "${STAGING_DIR}/" \
     --description "SC Agent for SSH access management by ${ORG_NAME}" \
     --maintainer "${GPG_EMAIL}" \
-    --url "https://github.com/strettch/sc-agent" \
+    --url "https://github.com/strettch/sc-console-agent" \
     --depends "libc6" --depends "dmidecode" --depends "jq" --depends "curl" \
     --after-install "${POSTINSTALL_SCRIPT}" \
     --before-remove "${PREREMOVE_SCRIPT}"
 
 echo "--- [Step 4/7] Building the .deb package..."
-if ! sudo aptly repo show sc-agent-repo > /dev/null 2>&1; then
-    sudo aptly repo create -distribution="focal" -component="main" sc-agent-repo
+if ! sudo aptly repo show sc-console-agent-repo > /dev/null 2>&1; then
+    sudo aptly repo create -distribution="focal" -component="main" sc-console-agent-repo
 fi
 
-sudo aptly repo add sc-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
+sudo aptly repo add sc-console-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
 SNAPSHOT_NAME="${PACKAGE_NAME}-${PACKAGE_VERSION}"
-sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-agent-repo
+sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-console-agent-repo
 
 # --- Configure GPG environment ---
 export GPG_TTY=$(tty)
@@ -139,9 +136,9 @@ cat << 'INSTALL_EOF' > "${TMP_INSTALL_SCRIPT}"
 set -e
 REPO_HOST="repo.cloud.strettch.dev"
 REPO_PATH="console"
-PACKAGE_NAME="sc-agent"
-GPG_KEY_FILENAME="sc-agent-repo.gpg"
-CONFIG_FILE="/etc/sc-agent/config.yaml"
+PACKAGE_NAME="sc-console-agent"
+GPG_KEY_FILENAME="sc-console-agent-repo.gpg"
+CONFIG_FILE="/etc/sc-console-agent/config.yaml"
 
 if [ "$(id -u)" -ne "0" ]; then
     echo "Run as root" >&2
@@ -164,6 +161,13 @@ log_and_run() {
         exit 1
     fi
 }
+
+# Clean up any old sc-agent configurations
+echo "Cleaning up old configurations..."
+rm -f /etc/apt/sources.list.d/sc-agent.list
+rm -f /usr/share/keyrings/sc-agent-keyring.gpg
+rm -f /etc/apt/sources.list.d/sc-console-agent.list 2>/dev/null || true
+rm -f /usr/share/keyrings/sc-console-agent-keyring.gpg 2>/dev/null || true
 
 log_and_run "Updating package lists..." "apt-get update > /dev/null" "update package lists"
 log_and_run "Installing prerequisites..." "apt-get install -y apt-transport-https ca-certificates curl gnupg > /dev/null" "install prerequisites"
