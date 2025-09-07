@@ -103,10 +103,8 @@ func (a *Agent) initialize() error {
 		a.logger = initLogger(cfg.LogLevel)
 	}
 
-	a.logger.Info("Starting Strettch Cloud Agent",
+	a.logger.Info("Starting Strettch Cloud Console Agent",
 		zap.String("version", version),
-		zap.String("resource_id", cfg.ResourceID),
-		zap.Int("udp_port", cfg.Console.UDPKnockPort),
 		zap.Int("http_port", cfg.Console.HTTPNotifyPort))
 
 	if a.processor, err = pipeline.NewProcessor(cfg, a.logger); err != nil {
