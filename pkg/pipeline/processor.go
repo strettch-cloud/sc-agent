@@ -114,7 +114,7 @@ func (p *Processor) Stop() error {
 
 // initialize fetches initial metadata and configures the UDP listener
 func (p *Processor) initialize() error {
-	p.logger.Info("Initializing with Strettch Cloud metadata service")
+	p.logger.Info("Initializing with Strettch Cloud Metadata Service")
 	
 	ctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
