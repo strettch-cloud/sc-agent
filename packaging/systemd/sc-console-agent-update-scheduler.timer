@@ -3,11 +3,12 @@ Description=SC-Agent Auto-Update Timer
 Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
 
 [Timer]
-# Check for updates every 1 minute (for testing)
+# Check for updates every 2 minutes with better reliability
 OnBootSec=30sec
-OnUnitActiveSec=1min
+OnCalendar=*:*:00,30
 RandomizedDelaySec=10sec
 Persistent=true
+AccuracySec=1s
 Unit=sc-console-agent-update-scheduler.service
 
 [Install]

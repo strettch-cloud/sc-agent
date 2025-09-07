@@ -90,8 +90,8 @@ func runAgent() error {
 func (a *Agent) initialize() error {
 	cfg, err := config.Load()
 	if err != nil {
-		if strings.Contains(err.Error(), "resource_id cannot be determined") {
-			a.logger.Fatal("Resource ID detection failed",
+		if strings.Contains(err.Error(), "ResourceID cannot be determined") {
+			a.logger.Fatal("Resource_id detection failed",
 				zap.Error(err),
 				zap.String("help", "Ensure dmidecode is installed or set SC_RESOURCE_ID manually"))
 		}
@@ -103,10 +103,8 @@ func (a *Agent) initialize() error {
 		a.logger = initLogger(cfg.LogLevel)
 	}
 
-	a.logger.Info("Starting Strettch Cloud Agent",
+	a.logger.Info("Starting Strettch Cloud Console Agent",
 		zap.String("version", version),
-		zap.String("resource_id", cfg.ResourceID),
-		zap.Int("udp_port", cfg.Console.UDPKnockPort),
 		zap.Int("http_port", cfg.Console.HTTPNotifyPort))
 
 	if a.processor, err = pipeline.NewProcessor(cfg, a.logger); err != nil {

@@ -71,15 +71,13 @@ else
 fi
 
 # Start the auto-update timer
-if ! systemctl is-active --quiet "${UPDATER_TIMER}"; then
-    echo "Starting auto-update timer..."
-    if systemctl start "${UPDATER_TIMER}"; then
-        echo "✅ Auto-update timer started successfully"
-    else
-        echo "⚠️  Warning: Auto-update timer failed to start"
-        echo "   Check logs with: journalctl -u ${UPDATER_TIMER}"
-        echo "   Manual start: systemctl start ${UPDATER_TIMER}"
-    fi
+echo "Starting auto-update timer..."
+if systemctl restart "${UPDATER_TIMER}"; then
+    echo "✅ Auto-update timer started successfully"
+else
+    echo "⚠️  Warning: Auto-update timer failed to start"
+    echo "   Check logs with: journalctl -u ${UPDATER_TIMER}"
+    echo "   Manual start: systemctl start ${UPDATER_TIMER}"
 fi
 
 # Print helpful status summary for the user
