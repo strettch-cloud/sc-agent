@@ -33,11 +33,15 @@ if [[ "$PACKAGE_STATUS" == *"F"* ]] || [[ "$PACKAGE_STATUS" == *"R"* ]] || [[ "$
     echo "Will attempt to fix during installation..."
 fi
 
-# Download package lists with retry logic
+# Download package lists with retry logic and cache clearing
 echo "Updating package lists..."
 for attempt in {1..3}; do
+    # Clear APT cache to ensure fresh data
+    apt-get clean
     if apt-get update 2>&1; then
         echo "Package list update successful"
+        # Give APT cache a moment to settle
+        sleep 2
         break
     else
         echo "Package list update failed (attempt $attempt/3)"
@@ -94,14 +98,24 @@ else
     echo "Package status: $PACKAGE_STATUS (proceeding with caution)"
 fi
 
-# Check if update is actually needed
+# Check if update is actually needed with double verification
 CURRENT_VERSION=$(dpkg-query -W -f='${Version}' ${PACKAGE_NAME} 2>/dev/null || echo "none")
+
+# Get available version with multiple methods for reliability
 AVAILABLE_VERSION=$(apt-cache policy ${PACKAGE_NAME} | grep Candidate: | awk '{print $2}' 2>/dev/null || echo "none")
+AVAILABLE_VERSION_ALT=$(apt list --upgradable ${PACKAGE_NAME} 2>/dev/null | grep ${PACKAGE_NAME} | cut -d' ' -f2 2>/dev/null || echo "none")
 
 echo "Current version: $CURRENT_VERSION"
-echo "Available version: $AVAILABLE_VERSION"
+echo "Available version (policy): $AVAILABLE_VERSION"
+echo "Available version (list): $AVAILABLE_VERSION_ALT"
 
-if [ "$CURRENT_VERSION" = "$AVAILABLE_VERSION" ]; then
+# Use the newer version if they differ
+if [ "$AVAILABLE_VERSION_ALT" != "none" ] && [ "$AVAILABLE_VERSION_ALT" != "$AVAILABLE_VERSION" ]; then
+    echo "Using alternate method result: $AVAILABLE_VERSION_ALT"
+    AVAILABLE_VERSION="$AVAILABLE_VERSION_ALT"
+fi
+
+if [ "$CURRENT_VERSION" = "$AVAILABLE_VERSION" ] || [ "$AVAILABLE_VERSION" = "none" ]; then
     echo "[$(date -u +"%Y-%m-%d %H:%M:%S UTC")] Already running the latest version, no update needed"
     exit 0
 fi

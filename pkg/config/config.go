@@ -39,9 +39,9 @@ type ConsoleConfig struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		MetadataServiceEndpoint: "http://127.0.0.1:8000/metadata/v1/auth-token",
-		ResourceID:             "a4c6bb6c-21ca-4289-b4ca-998a808ffece",
-		ResourceIP:              "127.0.0.1",
+		MetadataServiceEndpoint: "http://169.254.169.254/metadata/v1/auth-token",
+		ResourceID:              detectResourceID(),
+		ResourceIP:              detectResourceIP(),
 		Console: ConsoleConfig{
 			UDPKnockPort:     60124,
 			HTTPNotifyPort:   60125,
