@@ -51,9 +51,18 @@ else
     
     # Stop services but don't delete config files
     # This allows for reinstallation without losing configuration
-    systemctl stop ${UPDATER_TIMER} || true
-    systemctl stop ${UPDATER_SERVICE} || true
-    systemctl stop ${SERVICE_NAME} || true
+    
+    # Check if we're being called from the auto-updater
+    if systemctl is-active --quiet ${UPDATER_SERVICE}; then
+        echo "Auto-updater is running, skipping updater service stop"
+        systemctl stop ${UPDATER_TIMER} || true
+        systemctl stop ${SERVICE_NAME} || true
+    else
+        # Normal upgrade/removal - stop all services
+        systemctl stop ${UPDATER_TIMER} || true
+        systemctl stop ${UPDATER_SERVICE} || true
+        systemctl stop ${SERVICE_NAME} || true
+    fi
     
     # Only disable services on removal, not during upgrade
     if [ "$1" = "remove" ]; then
