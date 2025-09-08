@@ -9,21 +9,21 @@ jobs:
     name: Build and Deploy Beta Release
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for creating releases
-      actions: read    # Required for downloading artifacts
-      checks: read     # Required for status checks
+      contents: write
+      actions: read
+      checks: read
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Fetch full history for changelog generation
+        fetch-depth: 0
 
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
         go-version: '1.21'
-        cache: true  # Built-in caching
+        cache: true
 
     - name: Generate beta version
       id: version
@@ -33,12 +33,11 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Generated beta version: $VERSION"
 
-    - name: Create Git tag first
+    - name: Create Git tag
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git tag -a ${{ steps.version.outputs.version }} -m "Beta release ${{ steps.version.outputs.version }}"
-        # Don't push yet, just create locally for the build
 
     - name: Generate changelog
       id: changelog
@@ -55,20 +54,11 @@ jobs:
       run: |
         make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
 
-    - name: Install packaging dependencies 
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: ruby ruby-dev build-essential
-        version: 1.0
-
-    - name: Setup Ruby and install FPM
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.0'
-        bundler-cache: false
-    
-    - name: Install FPM gem
-      run: gem install fpm --no-document
+    - name: Install packaging dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ruby ruby-dev build-essential
+        sudo gem install fpm --no-document
 
     - name: Build package
       env:
@@ -93,7 +83,7 @@ jobs:
           --description "Strettch Cloud Agent - Enabling secure console access and instance management. (Beta Release)" \
           --maintainer "engineering@strettch.com" \
           --url "https://github.com/strettch/sc-console-agent" \
-          --depends "libc6" --depends "dmidecode" \
+          --depends "libc6" --depends "dmidecode" --depends "jq" --depends "curl" \
           --after-install "packaging/scripts/post-install.sh" \
           --before-remove "packaging/scripts/pre-remove.sh"
 
@@ -129,7 +119,7 @@ jobs:
         body: |
           ## Beta Release ${{ steps.version.outputs.version }}
           
-          This is an automated beta release containing the latest changes from the main branch.
+          This is an automated beta release containing the latest changes from the staging branch.
           
           ### Installation
           ```bash
@@ -141,5 +131,5 @@ jobs:
           
           **Note:** This is a beta release. Use stable releases for production deployments.
         prerelease: true
-        artifacts: "sc-agent_*.deb"
+        artifacts: "sc-console-agent_*.deb"
         token: ${{ secrets.GITHUB_TOKEN }}
