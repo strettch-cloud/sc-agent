@@ -3,94 +3,139 @@
 # Purpose: Configure directories, permissions, and start services after package installation
 # Triggered by: APT package manager automatically after installing sc-console-agent.deb
 
-set -e  # Exit immediately if any command fails
+set -euo pipefail
 
 # Define service names used throughout the script
-SERVICE_NAME="sc-console-agent.service"          # Main agent service
-UPDATER_SERVICE="sc-console-agent-update-scheduler.service"  # One-shot updater service
-UPDATER_TIMER="sc-console-agent-update-scheduler.timer"      # Timer that triggers updates
+readonly SERVICE_NAME="sc-console-agent.service"
+readonly UPDATER_SERVICE="sc-console-agent-update-scheduler.service"
+readonly UPDATER_TIMER="sc-console-agent-update-scheduler.timer"
+
+# Define directories
+readonly RUNTIME_DIR="/var/run/sc-console-agent"
+readonly CONFIG_DIR="/etc/sc-console-agent"
+
+# Helper function for colored output
+print_status() {
+    local status=$1
+    local message=$2
+    case $status in
+        "info") echo "ℹ️  $message" ;;
+        "success") echo "✅ $message" ;;
+        "warning") echo "⚠️  $message" ;;
+        "error") echo "❌ $message" ;;
+    esac
+}
 
 echo "Configuring SC-Agent..."
 
-# Create necessary directories for agent operation
-# mkdir -p: create parent directories as needed, no error if exists
-echo "Creating required directories..."
-mkdir -p /var/run/sc-console-agent      # Directory for runtime files (PID, sockets)
-mkdir -p /etc/sc-console-agent          # Directory for configuration files
+# Create necessary directories with proper ownership
+print_status "info" "Creating required directories..."
+install -d -m 750 "$RUNTIME_DIR" 
+install -d -m 755 "$CONFIG_DIR"
 
-# Set secure permissions on directories
-# 750 = rwxr-x--- (owner: read/write/execute, group: read/execute, others: none)
-# 755 = rwxr-xr-x (owner: read/write/execute, group & others: read/execute)
-chmod 750 /var/run/sc-console-agent     # Runtime files should be private
-chmod 755 /etc/sc-console-agent         # Config can be world-readable
-
-# Reload systemd to recognize new service files that package installed
-echo "Reloading systemd configuration..."
-systemctl daemon-reload
-
-# Enable main service to start on boot
-# is-enabled: check if service is enabled without output
-# --quiet: suppress output
-if ! systemctl is-enabled --quiet "${SERVICE_NAME}"; then
-    echo "Enabling ${SERVICE_NAME}..."
-    systemctl enable "${SERVICE_NAME}"  # Create symlinks for boot startup
-else
-    echo "${SERVICE_NAME} is already enabled."
+# Create default config if it doesn't exist
+if [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
+    print_status "info" "Creating default configuration..."
+    cat > "${CONFIG_DIR}/config.yaml" <<EOF
+# SC-Agent Configuration
+EOF
+    chmod 644 "${CONFIG_DIR}/config.yaml"
 fi
 
-# Enable auto-update timer to run periodically
-if ! systemctl is-enabled --quiet "${UPDATER_TIMER}"; then
-    echo "Enabling auto-update timer..."
-    systemctl enable "${UPDATER_TIMER}"  # Enable timer for periodic updates
-else
-    echo "${UPDATER_TIMER} is already enabled."
+# Reload systemd to recognize new service files
+print_status "info" "Reloading systemd configuration..."
+if ! systemctl daemon-reload; then
+    print_status "error" "Failed to reload systemd"
+    exit 1
 fi
 
-# Clear any previous failed states from systemd
-# || true: don't fail if service doesn't exist or command fails
-systemctl reset-failed "${SERVICE_NAME}" || true
-systemctl reset-failed "${UPDATER_SERVICE}" || true
-
-# Start or restart the main service
-# is-active: check if service is currently running
-if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
-    # Service not running - start it
-    echo "Starting ${SERVICE_NAME}..."
-    if systemctl start "${SERVICE_NAME}"; then
-        echo "✅ ${SERVICE_NAME} started successfully"
+# Function to safely enable service
+enable_service() {
+    local service=$1
+    if ! systemctl is-enabled --quiet "$service" 2>/dev/null; then
+        print_status "info" "Enabling $service..."
+        if systemctl enable "$service" 2>/dev/null; then
+            print_status "success" "$service enabled"
+        else
+            print_status "warning" "Could not enable $service"
+            return 1
+        fi
     else
-        # Service failed to start - provide debugging help
-        echo "⚠️  Warning: ${SERVICE_NAME} could not be started immediately."
-        echo "   Please check 'systemctl status ${SERVICE_NAME}' for details."
-        echo "   View logs with: journalctl -u ${SERVICE_NAME} -f"
+        print_status "info" "$service is already enabled"
     fi
-else
-    # Service already running - restart to load new version
-    echo "Restarting ${SERVICE_NAME} to apply updates..."
-    systemctl restart "${SERVICE_NAME}"
-fi
+    return 0
+}
 
-# Start the auto-update timer
-echo "Starting auto-update timer..."
-if systemctl restart "${UPDATER_TIMER}"; then
-    echo "✅ Auto-update timer started successfully"
-else
-    echo "⚠️  Warning: Auto-update timer failed to start"
-    echo "   Check logs with: journalctl -u ${UPDATER_TIMER}"
-    echo "   Manual start: systemctl start ${UPDATER_TIMER}"
-fi
+# Enable services
+enable_service "${SERVICE_NAME}"
+enable_service "${UPDATER_TIMER}"
 
-# Print helpful status summary for the user
+# Clear any previous failed states
+systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
+systemctl reset-failed "${UPDATER_SERVICE}" 2>/dev/null || true
+systemctl reset-failed "${UPDATER_TIMER}" 2>/dev/null || true
+
+# Function to start/restart service
+start_or_restart_service() {
+    local service=$1
+    local is_timer=false
+    
+    [[ "$service" == *.timer ]] && is_timer=true
+    
+    if systemctl is-active --quiet "$service" 2>/dev/null; then
+        print_status "info" "Restarting $service to apply updates..."
+        if systemctl restart "$service"; then
+            print_status "success" "$service restarted successfully"
+        else
+            print_status "warning" "$service restart failed"
+            return 1
+        fi
+    else
+        print_status "info" "Starting $service..."
+        if systemctl start "$service"; then
+            print_status "success" "$service started successfully"
+        else
+            print_status "warning" "$service could not be started"
+            if [ "$is_timer" = false ]; then
+                echo "  Please check 'systemctl status $service' for details"
+                echo "  View logs with: journalctl -u $service -n 50"
+            fi
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Start services
+start_or_restart_service "${SERVICE_NAME}"
+start_or_restart_service "${UPDATER_TIMER}"
+
+# Wait a moment for services to stabilize
+sleep 2
+
+# Verify services are running
+MAIN_STATUS=$(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || echo "inactive")
+TIMER_STATUS=$(systemctl is-active "${UPDATER_TIMER}" 2>/dev/null || echo "inactive")
+
+# Print status summary
 echo ""
-echo "================================"
-echo "SC-Agent Installation Complete"
-echo "================================"
-echo "Service status: $(systemctl is-active ${SERVICE_NAME})"  # Show running/dead status
-echo "Auto-update: $(systemctl is-active ${UPDATER_TIMER})"   # Show timer active status
+echo "╔════════════════════════════════════╗"
+echo "║ SC-Console-Agent Installation Done ║"
+echo "╚════════════════════════════════════╝"
 echo ""
-echo "Useful commands:"
-echo "  Check status:  systemctl status sc-console-agent"
-echo "  View logs:     journalctl -u sc-console-agent -f"
-echo "  Configuration: /etc/sc-console-agent/config.yaml"
-echo "  Manual update: systemctl start sc-console-agent-updater"
+echo "Service Status:"
+echo "  • Main Service: $MAIN_STATUS"
+echo "  • Auto-Update:  $TIMER_STATUS"
 echo ""
+echo "Useful Commands:"
+echo "  • Check status:   systemctl status sc-console-agent"
+echo "  • View logs:      journalctl -u sc-console-agent -f"
+echo "  • Configuration:  ${CONFIG_DIR}/config.yaml"
+echo "  • Manual update:  systemctl start ${UPDATER_SERVICE}"
+echo ""
+
+# Exit with appropriate code
+if [ "$MAIN_STATUS" != "active" ] || [ "$TIMER_STATUS" != "active" ]; then
+    exit 1
+fi
+exit 0

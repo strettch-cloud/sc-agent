@@ -1,4 +1,4 @@
-# SC Metrics Agent Makefile
+# SC Console Agent Makefile
 
 .PHONY: all build test clean install lint fmt vet run deps help release docker
 
@@ -6,7 +6,7 @@
 BINARY_NAME=sc-console-agent
 BUILD_DIR=build
 MAIN_PATH=./cmd/main.go
-VERSION := $(shell git describe --tags --always --dirty)
+VERSION ?= $(shell git describe --tags --always --dirty)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 
@@ -26,7 +26,7 @@ all: clean deps lint test build
 
 # Build the binary
 build:
-	@echo "Building $(BINARY_NAME) v$(VERSION) for $(GOOS)/$(GOARCH)..."
+	@echo "Building $(BINARY_NAME) $(VERSION) for $(GOOS)/$(GOARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		-ldflags="$(LDFLAGS)" \
@@ -38,15 +38,15 @@ build:
 build-all: clean deps
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 make -f MakeFile build
+	GOOS=linux GOARCH=amd64 $(MAKE) build
 	@mv $(BUILD_DIR)/$(BINARY_NAME) $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
-	GOOS=linux GOARCH=arm64 make -f MakeFile build
+	GOOS=linux GOARCH=arm64 $(MAKE) build
 	@mv $(BUILD_DIR)/$(BINARY_NAME) $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64
-	GOOS=darwin GOARCH=amd64 make -f MakeFile build
+	GOOS=darwin GOARCH=amd64 $(MAKE) build
 	@mv $(BUILD_DIR)/$(BINARY_NAME) $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64
-	GOOS=darwin GOARCH=arm64 make -f MakeFile build
+	GOOS=darwin GOARCH=arm64 $(MAKE) build
 	@mv $(BUILD_DIR)/$(BINARY_NAME) $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64
-	GOOS=windows GOARCH=amd64 make -f MakeFile build
+	GOOS=windows GOARCH=amd64 $(MAKE) build
 	@mv $(BUILD_DIR)/$(BINARY_NAME) $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe
 	@echo "Multi-platform build complete"
 
@@ -116,21 +116,32 @@ run-config: build
 	@echo "Running $(BINARY_NAME) with config file..."
 	SC_AGENT_CONFIG=config.yaml ./$(BUILD_DIR)/$(BINARY_NAME)
 
-# Install the binary and scripts
-install:
-	@echo "Installing $(BINARY_NAME) and scripts to /usr/local/bin..."
-	@sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
-	@sudo chmod +x /usr/local/bin/$(BINARY_NAME)
-	@sudo cp packaging/scripts/start-sc-console-agent.sh /usr/local/bin/start-sc-console-agent.sh
-	@sudo chmod +x /usr/local/bin/start-sc-console-agent.sh
-	@echo "$(BINARY_NAME) and scripts installed successfully."
+# Install the binary to system location (matches packaging)
+install: build
+	@echo "Installing $(BINARY_NAME) to /usr/bin..."
+	@sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/bin/$(BINARY_NAME)
+	@sudo chmod 755 /usr/bin/$(BINARY_NAME)
+	@echo "Installing updater script to /usr/bin..."
+	@if [ -f "packaging/scripts/$(BINARY_NAME)-updater.sh" ]; then \
+		sudo cp packaging/scripts/$(BINARY_NAME)-updater.sh /usr/bin/; \
+		sudo chmod 755 /usr/bin/$(BINARY_NAME)-updater.sh; \
+	fi
+	@echo "$(BINARY_NAME) installed successfully."
 
-# Uninstall the binary and scripts
+# Uninstall the binary from system location
 uninstall:
-	@echo "Uninstalling $(BINARY_NAME) and scripts from /usr/local/bin..."
-	@sudo rm -f /usr/local/bin/$(BINARY_NAME)
-	@sudo rm -f /usr/local/bin/start-sc-console-agent.sh
-	@echo "$(BINARY_NAME) and scripts uninstalled successfully."
+	@echo "Uninstalling $(BINARY_NAME) from /usr/bin..."
+	@sudo rm -f /usr/bin/$(BINARY_NAME)
+	@sudo rm -f /usr/bin/$(BINARY_NAME)-updater.sh
+	@echo "$(BINARY_NAME) uninstalled successfully."
+
+# Install for local development (user directory)
+install-local: build
+	@echo "Installing $(BINARY_NAME) to ~/.local/bin..."
+	@mkdir -p ~/.local/bin
+	@cp $(BUILD_DIR)/$(BINARY_NAME) ~/.local/bin/$(BINARY_NAME)
+	@chmod 755 ~/.local/bin/$(BINARY_NAME)
+	@echo "$(BINARY_NAME) installed locally. Make sure ~/.local/bin is in your PATH."
 
 # Clean build artifacts
 clean:
@@ -177,7 +188,9 @@ release: clean build-all
 			mkdir -p $(BUILD_DIR)/release/$$dirname; \
 			cp $$binary $(BUILD_DIR)/release/$$dirname/$(BINARY_NAME); \
 			cp README.md $(BUILD_DIR)/release/$$dirname/; \
-			cp config.example.yaml $(BUILD_DIR)/release/$$dirname/; \
+			if [ -f "config.example.yaml" ]; then \
+				cp config.example.yaml $(BUILD_DIR)/release/$$dirname/; \
+			fi; \
 			cd $(BUILD_DIR)/release && tar -czf $$dirname.tar.gz $$dirname/; \
 			cd ../..; \
 		fi \
@@ -187,8 +200,8 @@ release: clean build-all
 # Docker build
 docker:
 	@echo "Building Docker image..."
-	docker build -t sc-console-agent:$(VERSION) .
-	docker tag sc-console-agent:$(VERSION) sc-console-agent:latest
+	docker build -t $(BINARY_NAME):$(VERSION) .
+	docker tag $(BINARY_NAME):$(VERSION) $(BINARY_NAME):latest
 
 # Docker run
 docker-run: docker
@@ -197,28 +210,28 @@ docker-run: docker
 		--pid=host \
 		--privileged \
 		-e SC_LOG_LEVEL=debug \
-		-e SC_INGESTOR_ENDPOINT=http://host.docker.internal:8080/ingest \
-		sc-console-agent:$(VERSION)
+		-e SC_METADATA_ENDPOINT=http://169.254.169.254 \
+		$(BINARY_NAME):$(VERSION)
 
-# Release tagging scripts
-release-patch:
-	@echo "Creating patch release..."
-	@./packaging/scripts/release.sh patch
-
-release-minor:
-	@echo "Creating minor release..."
-	@./packaging/scripts/release.sh minor
-
-release-major:
-	@echo "Creating major release..."
-	@./packaging/scripts/release.sh major
+# Package build (for CI/CD alignment)
+package: build
+	@echo "Building Debian package..."
+	@STAGING_DIR="/tmp/$(BINARY_NAME)-build" && \
+	rm -rf "$${STAGING_DIR}" && \
+	mkdir -p "$${STAGING_DIR}/usr/bin" "$${STAGING_DIR}/etc/systemd/system" && \
+	cp $(BUILD_DIR)/$(BINARY_NAME) "$${STAGING_DIR}/usr/bin/" && \
+	chmod 755 "$${STAGING_DIR}/usr/bin/$(BINARY_NAME)" && \
+	cp packaging/scripts/$(BINARY_NAME)-updater.sh "$${STAGING_DIR}/usr/bin/" && \
+	chmod 755 "$${STAGING_DIR}/usr/bin/$(BINARY_NAME)-updater.sh" && \
+	cp packaging/systemd/*.service packaging/systemd/*.timer "$${STAGING_DIR}/etc/systemd/system/" && \
+	echo "Package staging complete at $${STAGING_DIR}"
 
 # Development setup
 dev-setup:
 	@echo "Setting up development environment..."
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+	go install github.com/secureco/gosec/v2/cmd/gosec@latest
 	go install golang.org/x/vuln/cmd/govulncheck@latest
 	go install github.com/vektra/mockery/v2@latest
 	@echo "Development tools installed"
@@ -236,6 +249,7 @@ validate-config:
 # Show build info
 info:
 	@echo "Build Information:"
+	@echo "  Binary:  $(BINARY_NAME)"
 	@echo "  Version: $(VERSION)"
 	@echo "  Commit:  $(COMMIT)"
 	@echo "  Time:    $(BUILD_TIME)"
@@ -247,7 +261,7 @@ info:
 watch:
 	@echo "Watching for changes (requires 'entr' command)..."
 	@if command -v entr >/dev/null 2>&1; then \
-		find . -name '*.go' | entr -r make run; \
+		find . -name '*.go' | entr -r $(MAKE) run; \
 	else \
 		echo "entr not installed. Install with: brew install entr (macOS) or apt-get install entr (Ubuntu)"; \
 	fi
@@ -262,13 +276,15 @@ profile: build
 
 # Show help
 help:
-	@echo "SC Metrics Agent Build Commands:"
+	@echo "SC Console Agent Build Commands:"
 	@echo ""
 	@echo "Building:"
-	@echo "  make build      - Build binary for current platform"
-	@echo "  make build-all  - Build binaries for all platforms"
-	@echo "  make install    - Install binary to /usr/local/bin"
-	@echo "  make uninstall  - Remove binary from /usr/local/bin"
+	@echo "  make build          - Build binary for current platform"
+	@echo "  make build-all      - Build binaries for all platforms"
+	@echo "  make package        - Prepare Debian package structure"
+	@echo "  make install        - Install binary to /usr/bin (system-wide)"
+	@echo "  make install-local  - Install binary to ~/.local/bin (user)"
+	@echo "  make uninstall      - Remove binary from /usr/bin"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test           - Run tests"
@@ -277,31 +293,31 @@ help:
 	@echo "  make bench          - Run benchmarks"
 	@echo ""
 	@echo "Code Quality:"
-	@echo "  make lint        - Run linters"
-	@echo "  make fmt         - Format code"
-	@echo "  make vet         - Run go vet"
-	@echo "  make security    - Run security scan"
-	@echo "  make vuln-check  - Check for vulnerabilities"
+	@echo "  make lint           - Run linters"
+	@echo "  make fmt            - Format code"
+	@echo "  make vet            - Run go vet"
+	@echo "  make security       - Run security scan"
+	@echo "  make vuln-check     - Check for vulnerabilities"
 	@echo ""
 	@echo "Running:"
-	@echo "  make run         - Run agent with default config"
-	@echo "  make run-debug   - Run agent with debug logging"
-	@echo "  make run-config  - Run agent with config.yaml"
+	@echo "  make run            - Run agent with default config"
+	@echo "  make run-debug      - Run agent with debug logging"
+	@echo "  make run-config     - Run agent with config.yaml"
 	@echo ""
 	@echo "Docker:"
-	@echo "  make docker      - Build Docker image"
-	@echo "  make docker-run  - Build and run Docker container"
+	@echo "  make docker         - Build Docker image"
+	@echo "  make docker-run     - Build and run Docker container"
 	@echo ""
 	@echo "Development:"
-	@echo "  make dev-setup   - Install development tools"
-	@echo "  make watch       - Watch for changes and rebuild"
-	@echo "  make profile     - Run with profiling enabled"
-	@echo "  make mocks       - Generate mocks"
+	@echo "  make dev-setup      - Install development tools"
+	@echo "  make watch          - Watch for changes and rebuild"
+	@echo "  make profile        - Run with profiling enabled"
+	@echo "  make mocks          - Generate mocks"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make deps        - Install dependencies"
-	@echo "  make clean       - Clean build artifacts"
-	@echo "  make release     - Create release archives"
-	@echo "  make info        - Show build information"
+	@echo "  make deps           - Install dependencies"
+	@echo "  make clean          - Clean build artifacts"
+	@echo "  make release        - Create release archives"
+	@echo "  make info           - Show build information"
 	@echo "  make validate-config - Validate configuration file"
-	@echo "  make help        - Show this help message"
+	@echo "  make help           - Show this help message"
