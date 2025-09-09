@@ -162,15 +162,15 @@ jobs:
           
           # Create staging directory
           STAGING_DIR="/tmp/sc-console-agent-build-${arch}"
-          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
+          mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
           
           # Copy binary for specific architecture
-          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-console-agent"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent"
+          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/bin/sc-console-agent"
+          chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent"
           
           # Copy scripts and configs
-          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent-updater.sh"
+          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/bin/"
+          chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent-updater.sh"
           cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
           cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
           cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"

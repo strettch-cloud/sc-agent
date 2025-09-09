@@ -170,16 +170,15 @@ func (c *Config) loadFromEnv() {
 		c.MetadataServiceEndpoint = val
 	}
 	
-	
 	// Support explicit resource ID override (for testing)
 	if val := os.Getenv("SC_RESOURCE_ID"); val != "" {
 		c.ResourceID = val
 	}
 	
-	// Support legacy VMID env var
-	if val := os.Getenv("SC_VM_ID"); val != "" && c.ResourceID == "" {
-		c.ResourceID = val
-	}
+	// Support Resource IP Override
+	if val := os.Getenv("SC_RESOURCE_IP"); val != "" {
+        c.ResourceIP = val
+    }
 	
 	// Optional overrides for debugging
 	if val := os.Getenv("SC_LOG_LEVEL"); val != "" {

@@ -10,6 +10,7 @@ set -e
 ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
 PACKAGE_NAME="sc-console-agent"
+KEEP_VERSIONS=5  # Number of versions to keep in repository
 
 # Get the latest tag to use as version
 LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -79,14 +80,14 @@ done
 echo "--- [Step 3/7] Preparing packaging assets..."
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
+mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
 
 # Copy files
-cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
+cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}"
 
-cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
+cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}-updater.sh"
 
 cp "${SERVICE_FILE}" "${STAGING_DIR}/etc/systemd/system/"
 cp "${UPDATER_SERVICE}" "${STAGING_DIR}/etc/systemd/system/"
@@ -107,6 +108,24 @@ fpm -s dir -t deb \
 echo "--- [Step 4/7] Adding package to APT repository..."
 if ! sudo aptly repo show sc-console-agent-repo > /dev/null 2>&1; then
     sudo aptly repo create -distribution="focal" -component="main" sc-console-agent-repo
+fi
+
+# Clean up old versions before adding new one
+echo "Checking for old versions to remove (keeping last ${KEEP_VERSIONS} versions)..."
+CURRENT_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | sed 's/^  //' | sort -V)
+VERSION_COUNT=$(echo "$CURRENT_VERSIONS" | grep -c . || echo 0)
+
+if [ $VERSION_COUNT -ge $KEEP_VERSIONS ]; then
+    VERSIONS_TO_REMOVE=$((VERSION_COUNT - KEEP_VERSIONS + 1))
+    echo "Found $VERSION_COUNT versions, removing $VERSIONS_TO_REMOVE oldest versions..."
+    
+    # Get the versions to remove (oldest ones)
+    OLD_VERSIONS=$(echo "$CURRENT_VERSIONS" | head -n $VERSIONS_TO_REMOVE)
+    
+    for old_ver in $OLD_VERSIONS; do
+        echo "Removing old version: $old_ver"
+        sudo aptly repo remove sc-console-agent-repo "$old_ver" || true
+    done
 fi
 
 sudo aptly repo add sc-console-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
