@@ -15,15 +15,15 @@ GOOS=linux GOARCH=amd64 make build
 # Create staging directory
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build-test"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/usr/local/bin"
+mkdir -p "${STAGING_DIR}/usr/bin"
 mkdir -p "${STAGING_DIR}/etc/systemd/system"
 
 # Copy files
-cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
+cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}"
 
-cp "packaging/scripts/${PACKAGE_NAME}-updater.sh" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
+cp "packaging/scripts/${PACKAGE_NAME}-updater.sh" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}-updater.sh"
 
 cp "packaging/systemd/sc-console-agent.service" "${STAGING_DIR}/etc/systemd/system/"
 cp "packaging/systemd/sc-console-agent-update-scheduler.service" "${STAGING_DIR}/etc/systemd/system/"
