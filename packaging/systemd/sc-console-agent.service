@@ -1,38 +1,50 @@
 [Unit]
-Description=Strettch Cloud Console Agent - Secure VM console access management
+Description=SC Console Agent - Secure VM console access management
 Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
-After=network-online.target
+After=network-online.target sshd.service
 Wants=network-online.target
-StartLimitIntervalSec=600
-StartLimitBurst=5
+Requires=network.target
+
+# Restart limiting
+StartLimitIntervalSec=3600  # 1 hour window
+StartLimitBurst=20         # 20 restarts allowed
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sc-console-agent
+ExecStart=/usr/bin/sc-console-agent
 ExecReload=/bin/kill -HUP $MAINPID
-ExecStop=/bin/kill -TERM $MAINPID
 
 # Restart configuration
-Restart=on-failure
+Restart=always
 RestartSec=30
 RestartPreventExitStatus=0
-SuccessExitStatus=0 2
+
+# Timeouts
 TimeoutStartSec=90
 TimeoutStopSec=90
-KillMode=process
+
+# Kill configuration
+KillMode=mixed
+KillSignal=SIGTERM
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
 
 # Resource limits
 LimitNOFILE=65536
 LimitNPROC=4096
+MemoryMax=512M
+MemorySwapMax=0  # Prevent swapping
+CPUQuota=80%  
 
 # Memory protection
-OOMScoreAdjust=-500
+OOMScoreAdjust=-500  # avoid OOM killer
 
-# Security hardening
+# Security
+User=root
+Group=root
 PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=no
-ReadWritePaths=/etc/sc-console-agent /var/run/sc-console-agent /root/.ssh /home
+ProtectHome=no  # Need access to home dirs for SSH keys
 NoNewPrivileges=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
@@ -40,26 +52,36 @@ LockPersonality=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-SystemCallFilter=@system-service
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+DevicePolicy=closed
+PrivateDevices=yes
+SystemCallFilter=@system-service @network-io
 SystemCallErrorNumber=EPERM
 
+# Filesystem access (only what's needed)
+ReadWritePaths=/etc/sc-console-agent /var/run/sc-console-agent
+# For SSH key management - be specific about paths
+ReadWritePaths=/root/.ssh /home/*/.ssh
+# For reading SSH config
+ReadOnlyPaths=/etc/ssh
+
 # Environment
+Environment="PATH=/usr/local/sbin:/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=-/etc/sc-console-agent/environment
-# Environment="SC_AGENT_CONFIG=/etc/sc-console-agent/config.yaml"
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=SCConsoleAgent
+SyslogLevel=info
 
-# User/Group
-User=root
-Group=root
-
-# Kill configuration
-KillMode=mixed
-KillSignal=SIGTERM
+# Process management
+Delegate=no
+RemainAfterExit=no
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=multi-user.target
