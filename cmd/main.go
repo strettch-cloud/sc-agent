@@ -103,7 +103,7 @@ func (a *Agent) initialize() error {
 		a.logger = initLogger(cfg.LogLevel)
 	}
 
-	a.logger.Info("Starting Strettch Cloud Console Agent",
+	a.logger.Info("Starting Strettch Cloud Console Agent TESTING AUTO UPDATE",
 		zap.String("version", version),
 		zap.Int("http_port", cfg.Console.HTTPNotifyPort))
 

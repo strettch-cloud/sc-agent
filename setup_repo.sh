@@ -79,14 +79,14 @@ done
 echo "--- [Step 3/7] Preparing packaging assets..."
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
+mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
 
 # Copy files
-cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
+cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}"
 
-cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
+cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}-updater.sh"
 
 cp "${SERVICE_FILE}" "${STAGING_DIR}/etc/systemd/system/"
 cp "${UPDATER_SERVICE}" "${STAGING_DIR}/etc/systemd/system/"
