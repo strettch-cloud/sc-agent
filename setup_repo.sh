@@ -10,11 +10,16 @@ set -e
 ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
 PACKAGE_NAME="sc-console-agent"
+KEEP_VERSIONS=5  # Number of versions to keep in repository
+
+# Release type configuration (stable or beta)
+RELEASE_TYPE="${RELEASE_TYPE:-stable}"
+echo "Release type: $RELEASE_TYPE"
 
 # Get the latest tag to use as version
 LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [ -n "$LATEST_TAG" ]; then
-    PACKAGE_VERSION="${LATEST_TAG#v}"  # Remove 'v' prefix
+    PACKAGE_VERSION="${LATEST_TAG}"
     echo "Using version from latest tag: $PACKAGE_VERSION"
 else
     # Fallback to git describe if no tags
@@ -25,9 +30,20 @@ fi
 # Clean up any old packages
 rm -f ${PACKAGE_NAME}_*.deb
 
-REPO_DOMAIN="repo.cloud.strettch.dev"  # Production repository domain
+REPO_DOMAIN="repo.cloud.strettch.com"  # Production repository domain
 DISTRIBUTIONS="bionic focal jammy noble oracular"  # Ubuntu versions to support
-WEB_ROOT_DIR="/srv/repo/public/console"
+
+# Set web root directory based on release type
+if [ "$RELEASE_TYPE" = "beta" ]; then
+    WEB_ROOT_DIR="/srv/repo/public/console/beta"
+    REPO_URL_PATH="console/beta"
+else
+    WEB_ROOT_DIR="/srv/repo/public/console"
+    REPO_URL_PATH="console"
+fi
+
+echo "Web root directory: $WEB_ROOT_DIR"
+echo "Repository URL path: $REPO_URL_PATH"
 # ---
 
 # --- Asset Paths ---
@@ -79,14 +95,14 @@ done
 echo "--- [Step 3/7] Preparing packaging assets..."
 STAGING_DIR="/tmp/${PACKAGE_NAME}-build"
 rm -rf "${STAGING_DIR}"
-mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
+mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
 
 # Copy files
-cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}"
+cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}"
 
-cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/local/bin/"
-chmod +x "${STAGING_DIR}/usr/local/bin/${PACKAGE_NAME}-updater.sh"
+cp "${UPDATER_SCRIPT}" "${STAGING_DIR}/usr/bin/"
+chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}-updater.sh"
 
 cp "${SERVICE_FILE}" "${STAGING_DIR}/etc/systemd/system/"
 cp "${UPDATER_SERVICE}" "${STAGING_DIR}/etc/systemd/system/"
@@ -109,7 +125,25 @@ if ! sudo aptly repo show sc-console-agent-repo > /dev/null 2>&1; then
     sudo aptly repo create -distribution="focal" -component="main" sc-console-agent-repo
 fi
 
-sudo aptly repo add sc-console-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb
+# Clean up old versions before adding new one
+echo "Checking for old versions to remove (keeping last ${KEEP_VERSIONS} versions)..."
+CURRENT_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | sed 's/^  //' | sort -V)
+VERSION_COUNT=$(echo "$CURRENT_VERSIONS" | grep -c . || echo 0)
+
+if [ $VERSION_COUNT -ge $KEEP_VERSIONS ]; then
+    VERSIONS_TO_REMOVE=$((VERSION_COUNT - KEEP_VERSIONS + 1))
+    echo "Found $VERSION_COUNT versions, removing $VERSIONS_TO_REMOVE oldest versions..."
+    
+    # Get the versions to remove (oldest ones)
+    OLD_VERSIONS=$(echo "$CURRENT_VERSIONS" | head -n $VERSIONS_TO_REMOVE)
+    
+    for old_ver in $OLD_VERSIONS; do
+        echo "Removing old version: $old_ver"
+        sudo aptly repo remove sc-console-agent-repo "$old_ver" || true
+    done
+fi
+
+sudo aptly repo add sc-console-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64.deb
 SNAPSHOT_NAME="${PACKAGE_NAME}-${PACKAGE_VERSION}"
 sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-console-agent-repo
 
@@ -124,17 +158,29 @@ if [ -z "${GPG_FINGERPRINT}" ]; then
     exit 1
 fi
 
-# Publish snapshots with correct fingerprint
+# Publish snapshots with correct fingerprint to separate namespace
+APTLY_NAMESPACE="console"
+if [ "$RELEASE_TYPE" = "beta" ]; then
+    APTLY_NAMESPACE="console-beta"
+fi
+
 for dist in ${DISTRIBUTIONS}; do
-    echo "Publishing for ${dist}..."
+    echo "Publishing for ${dist} to namespace ${APTLY_NAMESPACE}..."
     # Drop any existing publication first to avoid conflicts
-    sudo aptly publish drop "${dist}" 2>/dev/null || true
-    sudo aptly publish snapshot -gpg-key="${GPG_FINGERPRINT}" -distribution="${dist}" -batch "${SNAPSHOT_NAME}"
+    sudo aptly publish drop "${dist}" "${APTLY_NAMESPACE}" 2>/dev/null || true
+    sudo aptly publish snapshot -gpg-key="${GPG_FINGERPRINT}" -distribution="${dist}" -batch "${SNAPSHOT_NAME}" "${APTLY_NAMESPACE}"
 done
 
 echo "--- [Step 5/7] Creating and Publishing the new version..."
 sudo mkdir -p "${WEB_ROOT_DIR}/aptly"
-sudo rsync -a --delete ~/.aptly/public/ "${WEB_ROOT_DIR}/aptly/"
+# Copy only the specific namespace to avoid mixing repositories
+if [ -d ~/.aptly/public/${APTLY_NAMESPACE} ]; then
+    sudo rsync -a --delete ~/.aptly/public/${APTLY_NAMESPACE}/ "${WEB_ROOT_DIR}/aptly/"
+    echo "✅ Copied aptly namespace '${APTLY_NAMESPACE}' to web directory"
+else
+    echo "Warning: Aptly namespace ${APTLY_NAMESPACE} not found, copying entire public directory"
+    sudo rsync -a --delete ~/.aptly/public/ "${WEB_ROOT_DIR}/aptly/"
+fi
 
 # Export GPG public key
 GPG_PUBLIC_KEY_FILE="${PACKAGE_NAME}-repo.gpg"
@@ -147,8 +193,8 @@ TMP_INSTALL_SCRIPT=$(mktemp)
 cat << 'INSTALL_EOF' > "${TMP_INSTALL_SCRIPT}"
 #!/bin/sh
 set -e
-REPO_HOST="repo.cloud.strettch.dev"
-REPO_PATH="console"
+REPO_HOST="repo.cloud.strettch.com"
+REPO_PATH="REPO_URL_PATH_PLACEHOLDER"
 PACKAGE_NAME="sc-console-agent"
 GPG_KEY_FILENAME="sc-console-agent-repo.gpg"
 CONFIG_FILE="/etc/sc-console-agent/config.yaml"
@@ -206,6 +252,9 @@ echo "✅ ${PACKAGE_NAME} installed successfully!"
 exit 0
 INSTALL_EOF
 
+# Replace placeholder with actual value
+sed -i "s|REPO_URL_PATH_PLACEHOLDER|${REPO_URL_PATH}|g" "${TMP_INSTALL_SCRIPT}"
+
 sudo mv "${TMP_INSTALL_SCRIPT}" "${INSTALL_SCRIPT_PATH}"
 sudo chmod +x "${INSTALL_SCRIPT_PATH}"
 
@@ -218,5 +267,5 @@ echo
 echo "========================================================================"
 echo "✅ Repository setup complete!"
 echo "To install the agent on a client machine, run:"
-echo "curl -sSL https://${REPO_DOMAIN}/console/install.sh | sudo bash"
+echo "curl -sSL https://${REPO_DOMAIN}/${REPO_URL_PATH}/install.sh | sudo bash"
 echo "======================================================================="

@@ -7,7 +7,7 @@
 Install SC-Agent using the official repository:
 
 ```bash
-curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash
+curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash
 ```
 
 ## Service Management

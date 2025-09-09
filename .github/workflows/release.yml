@@ -46,14 +46,14 @@ jobs:
         fi
         
         # Check if version already exists
-        if git tag -l | grep -q "^v$VERSION$"; then
-          echo "Error: Version v$VERSION already exists"
+        if git tag -l | grep -q "^$VERSION$"; then
+          echo "Error: Version $VERSION already exists"
           exit 1
         fi
         
         # Get last stable release
-        LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "v0.0.0")
-        LAST_STABLE_CLEAN=${LAST_STABLE#v}
+        LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "0.0.0")
+        LAST_STABLE_CLEAN=${LAST_STABLE}
         
         echo "Last stable version: $LAST_STABLE_CLEAN"
         echo "New version: $VERSION"
@@ -88,7 +88,7 @@ jobs:
         print(f"Version validation passed: $VERSION is a valid {release_type} release")
         EOF
         
-        echo "version=v$VERSION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
 
   stable-release:
     name: Build and Deploy Stable Release
@@ -162,21 +162,21 @@ jobs:
           
           # Create staging directory
           STAGING_DIR="/tmp/sc-console-agent-build-${arch}"
-          mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/systemd/system"
+          mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
           
           # Copy binary for specific architecture
-          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/local/bin/sc-console-agent"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent"
+          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/bin/sc-console-agent"
+          chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent"
           
           # Copy scripts and configs
-          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-          chmod +x "${STAGING_DIR}/usr/local/bin/sc-console-agent-updater.sh"
+          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/bin/"
+          chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent-updater.sh"
           cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
           cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
           cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
           # Build DEB package
-          fpm -s dir -t deb -n sc-console-agent -v ${VERSION#v} \
+          fpm -s dir -t deb -n sc-console-agent -v ${VERSION} \
             -a ${arch} \
             -C "${STAGING_DIR}/" \
             --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
@@ -189,7 +189,7 @@ jobs:
             --deb-systemd "packaging/systemd/sc-console-agent-update-scheduler.timer"
           
           # Build RPM package
-          fpm -s dir -t rpm -n sc-console-agent -v ${VERSION#v} \
+          fpm -s dir -t rpm -n sc-console-agent -v ${VERSION} \
             -a ${arch} \
             -C "${STAGING_DIR}/" \
             --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
@@ -218,10 +218,10 @@ jobs:
         
         # Update codebase and deploy packages  
         scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-console-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && ./setup_repo.sh"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && RELEASE_TYPE=stable ./setup_repo.sh"
         
         echo "✅ Deployment completed successfully!"
-        echo "📦 Repository updated at: https://repo.cloud.strettch.dev/console/"
+        echo "📦 Repository updated at: https://repo.cloud.strettch.com/console/"
 
     - name: Create Git tag
       run: |
@@ -242,7 +242,7 @@ jobs:
           
           ### Installation
           ```bash
-          curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash
+          curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash
           ```
           
           ### Changes since last release:

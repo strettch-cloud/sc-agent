@@ -107,7 +107,7 @@ func Execute[T any](ctx context.Context, logger *zap.Logger, name string, op Ope
 		if cfg.MaxAttempts > 0 {
 			fields = append(fields, zap.Int("max_attempts", cfg.MaxAttempts))
 		}
-		logger.Warn("Operation failed, retrying", fields...)
+		logger.Warn("Retrying operation after failure", fields...)
 		
 		// Wait before retry
 		timer := time.NewTimer(delay)

@@ -4,7 +4,7 @@ set -e
 CHANNEL="$1"
 
 # Get last stable release tag
-LAST_TAG=$(git tag -l --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
+LAST_TAG=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
 
 # Generate commits with hashes
 if [ -z "$LAST_TAG" ]; then
@@ -32,5 +32,5 @@ echo ""
 echo "### Installation"
 echo ""
 echo '```bash'
-echo 'curl -sSL https://repo.cloud.strettch.dev/console/install.sh | sudo bash'
+echo 'curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash'
 echo '```'
