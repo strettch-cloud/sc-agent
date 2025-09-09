@@ -118,18 +118,18 @@ run-config: build
 
 # Install the binary and scripts
 install:
-	@echo "Installing $(BINARY_NAME) and scripts to /usr/local/bin..."
-	@sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
-	@sudo chmod +x /usr/local/bin/$(BINARY_NAME)
-	@sudo cp packaging/scripts/start-sc-console-agent.sh /usr/local/bin/start-sc-console-agent.sh
-	@sudo chmod +x /usr/local/bin/start-sc-console-agent.sh
+	@echo "Installing $(BINARY_NAME) and scripts to /usr/bin..."
+	@sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/bin/$(BINARY_NAME)
+	@sudo chmod +x /usr/bin/$(BINARY_NAME)
+	@sudo cp packaging/scripts/start-sc-console-agent.sh /usr/bin/start-sc-console-agent.sh
+	@sudo chmod +x /usr/bin/start-sc-console-agent.sh
 	@echo "$(BINARY_NAME) and scripts installed successfully."
 
 # Uninstall the binary and scripts
 uninstall:
-	@echo "Uninstalling $(BINARY_NAME) and scripts from /usr/local/bin..."
-	@sudo rm -f /usr/local/bin/$(BINARY_NAME)
-	@sudo rm -f /usr/local/bin/start-sc-console-agent.sh
+	@echo "Uninstalling $(BINARY_NAME) and scripts from /usr/bin..."
+	@sudo rm -f /usr/bin/$(BINARY_NAME)
+	@sudo rm -f /usr/bin/start-sc-console-agent.sh
 	@echo "$(BINARY_NAME) and scripts uninstalled successfully."
 
 # Clean build artifacts
@@ -267,8 +267,8 @@ help:
 	@echo "Building:"
 	@echo "  make build      - Build binary for current platform"
 	@echo "  make build-all  - Build binaries for all platforms"
-	@echo "  make install    - Install binary to /usr/local/bin"
-	@echo "  make uninstall  - Remove binary from /usr/local/bin"
+	@echo "  make install    - Install binary to /usr/bin"
+	@echo "  make uninstall  - Remove binary from /usr/bin"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test           - Run tests"
