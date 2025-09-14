@@ -57,7 +57,7 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
         else
             # Stable is newer, start new beta series
             NEW_PATCH=$((STABLE_PATCH + 1))
-            NEW_VERSION="v${STABLE_MAJOR}.${STABLE_MINOR}.${NEW_PATCH}-beta.1"
+            NEW_VERSION="${STABLE_MAJOR}.${STABLE_MINOR}.${NEW_PATCH}-beta.1"
         fi
     else
         # No beta versions exist, create first one based on stable
@@ -66,7 +66,7 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
         MINOR=${STABLE_PARTS[1]:-0}
         PATCH=${STABLE_PARTS[2]:-0}
         NEW_PATCH=$((PATCH + 1))
-        NEW_VERSION="v${MAJOR}.${MINOR}.${NEW_PATCH}-beta.1"
+        NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}-beta.1"
     fi
     
 elif [[ "$RELEASE_TYPE" == "stable" ]]; then

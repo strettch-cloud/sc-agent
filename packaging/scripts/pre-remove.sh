@@ -54,7 +54,25 @@ case "$ACTION" in
         rm -rf "$RUNTIME_DIR"
         
         # Clean up systemd files
-        find /etc/systemd/system -name "sc-console-agent*" -delete 2>/dev/null || true
+        echo "Removing systemd service files..."
+        rm -f /etc/systemd/system/sc-console-agent.service 2>/dev/null || true
+        rm -f /etc/systemd/system/sc-console-agent-update-scheduler.service 2>/dev/null || true
+        rm -f /etc/systemd/system/sc-console-agent-update-scheduler.timer 2>/dev/null || true
+        rm -f /lib/systemd/system/sc-console-agent.service 2>/dev/null || true
+        rm -f /lib/systemd/system/sc-console-agent-update-scheduler.service 2>/dev/null || true
+        rm -f /lib/systemd/system/sc-console-agent-update-scheduler.timer 2>/dev/null || true
+        
+        # Remove any symlinks created by systemctl enable
+        find /etc/systemd/system -type l -name "sc-console-agent*" -delete 2>/dev/null || true
+        find /etc/systemd/system/multi-user.target.wants -name "sc-console-agent*" -delete 2>/dev/null || true
+        
+        # Remove APT repository configuration
+        echo "Removing APT repository configuration..."
+        rm -f /etc/apt/sources.list.d/sc-console-agent.list 2>/dev/null || true
+        rm -f /usr/share/keyrings/sc-console-agent-keyring.gpg 2>/dev/null || true
+        
+        # Remove the updater script
+        rm -f /usr/bin/sc-console-agent-updater.sh 2>/dev/null || true
         
         # Reload systemd
         systemctl daemon-reload 2>/dev/null || true

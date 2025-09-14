@@ -106,16 +106,28 @@ start_or_restart_service() {
     return 0
 }
 
-# Start services
-start_or_restart_service "${SERVICE_NAME}"
-start_or_restart_service "${UPDATER_TIMER}"
+# Start services (skip if auto-updater is handling this)
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" != "1" ]; then
+    print_status "info" "Starting services..."
+    start_or_restart_service "${SERVICE_NAME}"
+    start_or_restart_service "${UPDATER_TIMER}"
+else
+    print_status "info" "Auto-updater detected, skipping automatic service start"
+fi
 
 # Wait a moment for services to stabilize
-sleep 2
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" != "1" ]; then
+    sleep 2
+fi
 
-# Verify services are running
-MAIN_STATUS=$(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || echo "inactive")
-TIMER_STATUS=$(systemctl is-active "${UPDATER_TIMER}" 2>/dev/null || echo "inactive")
+# Verify services are running (if not managed by auto-updater)
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" != "1" ]; then
+    MAIN_STATUS=$(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || echo "inactive")
+    TIMER_STATUS=$(systemctl is-active "${UPDATER_TIMER}" 2>/dev/null || echo "inactive")
+else
+    MAIN_STATUS="managed-by-updater"
+    TIMER_STATUS="managed-by-updater"
+fi
 
 # Print status summary
 echo ""
@@ -135,7 +147,9 @@ echo "  • Manual update:  systemctl start ${UPDATER_SERVICE}"
 echo ""
 
 # Exit with appropriate code
-if [ "$MAIN_STATUS" != "active" ] || [ "$TIMER_STATUS" != "active" ]; then
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" = "1" ]; then
+    exit 0
+elif [ "$MAIN_STATUS" != "active" ] || [ "$TIMER_STATUS" != "active" ]; then
     exit 1
 fi
 exit 0
