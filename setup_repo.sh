@@ -152,9 +152,32 @@ if sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep 
     sudo aptly repo remove sc-console-agent-repo "$PACKAGE_FULL_NAME" || true
 fi
 
+# Clean up incompatible versions first
+if [ "$RELEASE_TYPE" = "stable" ]; then
+    # For stable releases, remove any beta versions from the repository
+    echo "Cleaning up beta versions from stable repository..."
+    BETA_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_.*-beta\." | sed 's/^  //')
+    if [ -n "$BETA_VERSIONS" ]; then
+        echo "Found beta versions in stable repository, removing them:"
+        echo "$BETA_VERSIONS"
+        for beta_ver in $BETA_VERSIONS; do
+            echo "Removing beta version: $beta_ver"
+            sudo aptly repo remove sc-console-agent-repo "$beta_ver" || true
+        done
+    else
+        echo "No beta versions found in stable repository"
+    fi
+fi
+
 # Clean up old versions before adding new one
 echo "Checking for old versions to remove (keeping last ${KEEP_VERSIONS} versions)..."
-CURRENT_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | sed 's/^  //' | sort -V)
+if [ "$RELEASE_TYPE" = "stable" ]; then
+    # For stable, only consider stable versions (not beta)
+    CURRENT_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | grep -v "beta" | sed 's/^  //' | sort -V)
+else
+    # For beta, consider all versions
+    CURRENT_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | sed 's/^  //' | sort -V)
+fi
 VERSION_COUNT=$(echo "$CURRENT_VERSIONS" | grep -c . || echo 0)
 
 if [ $VERSION_COUNT -ge $KEEP_VERSIONS ]; then
