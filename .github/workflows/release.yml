@@ -260,6 +260,14 @@ jobs:
           git tag -d v*.*.* 2>/dev/null || true
           git fetch --tags
           
+          echo '--- Validating stable version format ---'
+          VERSION='${{ needs.validate-version.outputs.version }}'
+          if [[ \"$VERSION\" =~ .*-beta.* ]]; then
+            echo 'ERROR: Cannot deploy beta version to stable repository'
+            echo \"Version: $VERSION\"
+            exit 1
+          fi
+          
           echo '--- Running repository setup ---'
           RELEASE_TYPE=stable PACKAGE_VERSION='${{ needs.validate-version.outputs.version }}' ./setup_repo.sh
           
