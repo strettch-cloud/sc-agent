@@ -16,10 +16,10 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
     # For beta releases, auto-generate version
     
     # Get the last beta version for the current base version
-    LAST_BETA=$(git tag -l --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -1 || echo "")
+    LAST_BETA=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -1 || echo "")
     
     # Get the last stable version
-    LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "v0.0.0")
+    LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "0.0.0")
     
     
     if [[ -n "$LAST_BETA" ]]; then
@@ -29,8 +29,8 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
         
         # Compare beta base with last stable to determine next version
         # Parse versions for comparison
-        BETA_VERSION_NUM=$(echo "${BETA_BASE#v}" | tr '.' ' ')
-        STABLE_VERSION_NUM=$(echo "${LAST_STABLE#v}" | tr '.' ' ')
+        BETA_VERSION_NUM=$(echo "${BETA_BASE}" | tr '.' ' ')
+        STABLE_VERSION_NUM=$(echo "${LAST_STABLE}" | tr '.' ' ')
         
         BETA_PARTS=($BETA_VERSION_NUM)
         STABLE_PARTS=($STABLE_VERSION_NUM)
@@ -57,7 +57,7 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
         else
             # Stable is newer, start new beta series
             NEW_PATCH=$((STABLE_PATCH + 1))
-            NEW_VERSION="v${STABLE_MAJOR}.${STABLE_MINOR}.${NEW_PATCH}-beta.1"
+            NEW_VERSION="${STABLE_MAJOR}.${STABLE_MINOR}.${NEW_PATCH}-beta.1"
         fi
     else
         # No beta versions exist, create first one based on stable
@@ -66,7 +66,7 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
         MINOR=${STABLE_PARTS[1]:-0}
         PATCH=${STABLE_PARTS[2]:-0}
         NEW_PATCH=$((PATCH + 1))
-        NEW_VERSION="v${MAJOR}.${MINOR}.${NEW_PATCH}-beta.1"
+        NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}-beta.1"
     fi
     
 elif [[ "$RELEASE_TYPE" == "stable" ]]; then
