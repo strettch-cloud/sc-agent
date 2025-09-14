@@ -261,7 +261,7 @@ jobs:
           git fetch --tags
           
           echo '--- Running repository setup ---'
-          RELEASE_TYPE=stable ./setup_repo.sh
+          RELEASE_TYPE=stable PACKAGE_VERSION='${{ needs.validate-version.outputs.version }}' ./setup_repo.sh
           
           echo '--- Validating deployment ---'
           if [ ! -f /srv/repo/public/console/install.sh ]; then

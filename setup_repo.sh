@@ -19,15 +19,31 @@ KEEP_VERSIONS=5  # Number of versions to keep in repository
 RELEASE_TYPE="${RELEASE_TYPE:-stable}"
 echo "Release type: $RELEASE_TYPE"
 
-# Get the latest tag to use as version
-LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-if [ -n "$LATEST_TAG" ]; then
-    PACKAGE_VERSION="${LATEST_TAG}"
-    echo "Using version from latest tag: $PACKAGE_VERSION"
+# Get the package version to use
+if [ -n "$PACKAGE_VERSION" ]; then
+    # Use provided version (from environment variable)
+    echo "Using provided version: $PACKAGE_VERSION"
+elif [ "$RELEASE_TYPE" = "stable" ]; then
+    # For stable releases, only use stable version tags (not beta)
+    LATEST_TAG=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
+    if [ -n "$LATEST_TAG" ]; then
+        PACKAGE_VERSION="${LATEST_TAG}"
+        echo "Using latest stable version: $PACKAGE_VERSION"
+    else
+        echo "No stable version tags found, using default version"
+        PACKAGE_VERSION="0.1.0"
+    fi
 else
-    # Fallback to git describe if no tags
-    PACKAGE_VERSION=$(git describe --tags --always --dirty)
-    echo "No tags found, using git describe: $PACKAGE_VERSION"
+    # For beta releases, get the latest tag (could be beta or stable)
+    LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    if [ -n "$LATEST_TAG" ]; then
+        PACKAGE_VERSION="${LATEST_TAG}"
+        echo "Using version from latest tag: $PACKAGE_VERSION"
+    else
+        # Fallback to git describe if no tags
+        PACKAGE_VERSION=$(git describe --tags --always --dirty)
+        echo "No tags found, using git describe: $PACKAGE_VERSION"
+    fi
 fi
 
 # Clean up any old packages
@@ -126,6 +142,14 @@ fpm -s dir -t deb \
 echo "--- [Step 4/7] Adding package to APT repository..."
 if ! sudo aptly repo show sc-console-agent-repo > /dev/null 2>&1; then
     sudo aptly repo create -distribution="focal" -component="main" sc-console-agent-repo
+fi
+
+# Remove any existing package with the same name/version to prevent conflicts
+PACKAGE_FULL_NAME="${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64"
+echo "Checking for existing package: $PACKAGE_FULL_NAME"
+if sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep -q "^  ${PACKAGE_FULL_NAME}$"; then
+    echo "Removing existing conflicting package: $PACKAGE_FULL_NAME"
+    sudo aptly repo remove sc-console-agent-repo "$PACKAGE_FULL_NAME" || true
 fi
 
 # Clean up old versions before adding new one
