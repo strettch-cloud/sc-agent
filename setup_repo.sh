@@ -83,6 +83,31 @@ for tool in fpm aptly gpg; do
 done
 
 echo "--- [Step 1/7] Cleaning up previous repository publications..."
+
+# Determine which repository and namespace we're working with
+if [ "$RELEASE_TYPE" = "beta" ]; then
+    REPO_NAME="sc-console-agent-beta-repo"
+    APTLY_NAMESPACE="console-beta"
+else
+    REPO_NAME="sc-console-agent-stable-repo"
+    APTLY_NAMESPACE="console"
+fi
+
+# Clean up any orphaned publications and snapshots from failed runs
+echo "Cleaning up orphaned aptly state for $RELEASE_TYPE..."
+
+# Check for broken publications and clean them up
+echo "Checking for broken publications in ${APTLY_NAMESPACE}..."
+for dist in ${DISTRIBUTIONS}; do
+    if sudo aptly publish show "${dist}" "${APTLY_NAMESPACE}" >/dev/null 2>&1; then
+        # Check if the publication is healthy
+        if ! sudo aptly publish show "${dist}" "${APTLY_NAMESPACE}" | grep -q "Snapshot:"; then
+            echo "Found broken publication for ${dist}, removing..."
+            sudo aptly publish drop "${dist}" "${APTLY_NAMESPACE}" -force-drop 2>/dev/null || true
+        fi
+    fi
+done
+
 # Clean up any old packages to keep repository clean
 rm -f ${PACKAGE_NAME}_*.deb
 
@@ -140,21 +165,33 @@ fpm -s dir -t deb \
     --before-remove "${PREREMOVE_SCRIPT}"
 
 echo "--- [Step 4/7] Adding package to APT repository..."
-if ! sudo aptly repo show sc-console-agent-repo > /dev/null 2>&1; then
-    sudo aptly repo create -distribution="focal" -component="main" sc-console-agent-repo
+
+# Use separate repositories for stable and beta to prevent conflicts
+if [ "$RELEASE_TYPE" = "beta" ]; then
+    REPO_NAME="sc-console-agent-beta-repo"
+else
+    REPO_NAME="sc-console-agent-stable-repo"
+fi
+
+echo "Using repository: $REPO_NAME for release type: $RELEASE_TYPE"
+
+# Create the appropriate repository if it doesn't exist
+if ! sudo aptly repo show "$REPO_NAME" > /dev/null 2>&1; then
+    echo "Creating new repository: $REPO_NAME"
+    sudo aptly repo create -distribution="focal" -component="main" "$REPO_NAME"
 fi
 
 # Remove any existing package with the same name/version to prevent conflicts
 PACKAGE_FULL_NAME="${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64"
-echo "Checking for existing package: $PACKAGE_FULL_NAME"
-if sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep -q "^  ${PACKAGE_FULL_NAME}$"; then
+echo "Checking for existing package: $PACKAGE_FULL_NAME in $REPO_NAME"
+if sudo aptly repo show -with-packages "$REPO_NAME" 2>/dev/null | grep -q "^  ${PACKAGE_FULL_NAME}$"; then
     echo "Removing existing conflicting package: $PACKAGE_FULL_NAME"
-    sudo aptly repo remove sc-console-agent-repo "$PACKAGE_FULL_NAME" || true
+    sudo aptly repo remove "$REPO_NAME" "$PACKAGE_FULL_NAME" || true
 fi
 
-# Clean up old versions before adding new one
+# Clean up old versions before adding new one (only within the same release type)
 echo "Checking for old versions to remove (keeping last ${KEEP_VERSIONS} versions)..."
-CURRENT_VERSIONS=$(sudo aptly repo show -with-packages sc-console-agent-repo 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | sed 's/^  //' | sort -V)
+CURRENT_VERSIONS=$(sudo aptly repo show -with-packages "$REPO_NAME" 2>/dev/null | grep "^  ${PACKAGE_NAME}_" | sed 's/^  //' | sort -V)
 VERSION_COUNT=$(echo "$CURRENT_VERSIONS" | grep -c . || echo 0)
 
 if [ $VERSION_COUNT -ge $KEEP_VERSIONS ]; then
@@ -166,13 +203,47 @@ if [ $VERSION_COUNT -ge $KEEP_VERSIONS ]; then
     
     for old_ver in $OLD_VERSIONS; do
         echo "Removing old version: $old_ver"
-        sudo aptly repo remove sc-console-agent-repo "$old_ver" || true
+        sudo aptly repo remove "$REPO_NAME" "$old_ver" || true
     done
 fi
 
-sudo aptly repo add sc-console-agent-repo ${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64.deb
+sudo aptly repo add "$REPO_NAME" ${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64.deb
 SNAPSHOT_NAME="${PACKAGE_NAME}-${PACKAGE_VERSION}"
-sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo sc-console-agent-repo
+
+# Handle existing snapshots with the new repository-specific approach
+echo "Creating snapshot: ${SNAPSHOT_NAME} from repository: $REPO_NAME"
+if sudo aptly snapshot show "${SNAPSHOT_NAME}" >/dev/null 2>&1; then
+    echo "Snapshot ${SNAPSHOT_NAME} already exists, removing it..."
+    # Drop any publications using this snapshot first
+    for dist in ${DISTRIBUTIONS}; do
+        sudo aptly publish drop "${dist}" "${APTLY_NAMESPACE}" 2>/dev/null || true
+    done
+    # Now drop the snapshot
+    sudo aptly snapshot drop "${SNAPSHOT_NAME}" -force
+fi
+
+sudo aptly snapshot create "${SNAPSHOT_NAME}" from repo "$REPO_NAME"
+
+# Clean up old snapshots for this release type (keep last 10 snapshots)
+echo "Cleaning up old snapshots for release type: $RELEASE_TYPE..."
+if [ "$RELEASE_TYPE" = "beta" ]; then
+    # For beta, clean up beta snapshots
+    OLD_SNAPSHOTS=$(sudo aptly snapshot list | grep "^${PACKAGE_NAME}-.*-beta\." | sort -V | head -n -10)
+else
+    # For stable, clean up stable snapshots (no beta in name)
+    OLD_SNAPSHOTS=$(sudo aptly snapshot list | grep "^${PACKAGE_NAME}-" | grep -v "beta" | sort -V | head -n -10)
+fi
+
+if [ -n "$OLD_SNAPSHOTS" ]; then
+    echo "Removing old snapshots:"
+    echo "$OLD_SNAPSHOTS"
+    for old_snapshot in $OLD_SNAPSHOTS; do
+        echo "Removing old snapshot: $old_snapshot"
+        sudo aptly snapshot drop "$old_snapshot" -force 2>/dev/null || true
+    done
+else
+    echo "No old snapshots to clean up for $RELEASE_TYPE"
+fi
 
 # --- Configure GPG environment ---
 export GPG_TTY=$(tty)
@@ -186,10 +257,7 @@ if [ -z "${GPG_FINGERPRINT}" ]; then
 fi
 
 # Publish snapshots with correct fingerprint to separate namespace
-APTLY_NAMESPACE="console"
-if [ "$RELEASE_TYPE" = "beta" ]; then
-    APTLY_NAMESPACE="console-beta"
-fi
+# APTLY_NAMESPACE already set at the beginning of the script
 
 for dist in ${DISTRIBUTIONS}; do
     echo "Publishing for ${dist} to namespace ${APTLY_NAMESPACE}..."
