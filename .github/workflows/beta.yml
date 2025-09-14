@@ -115,7 +115,46 @@ jobs:
         
         # Update codebase on server and build/publish from source
         # We must build on the server to get the new code changes
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout dev && git fetch origin dev && git reset --hard origin/dev && git fetch --tags && RELEASE_TYPE=beta ./setup_repo.sh"
+        echo "🔄 Updating repository server and deploying..."
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "
+          set -e
+          cd /root/sc-console-agent
+          
+          echo '--- Updating git repository ---'
+          git remote set-url origin git@github.com:strettch/sc-console-agent.git
+          git checkout .
+          git clean -fd
+          git checkout dev
+          git fetch origin dev
+          git reset --hard origin/dev
+          git fetch --tags
+          
+          echo '--- Cleaning up conflicting tags ---'
+          git tag -d v*-beta.* 2>/dev/null || true
+          git tag -d v*.*.* 2>/dev/null || true
+          
+          echo '--- Running repository setup ---'
+          RELEASE_TYPE=beta ./setup_repo.sh
+          
+          echo '--- Validating deployment ---'
+          if [ ! -f /srv/repo/public/console/beta/install.sh ]; then
+            echo 'ERROR: install.sh not found after deployment'
+            exit 1
+          fi
+          
+          if [ ! -d /srv/repo/public/console/beta/aptly ] || [ -z \"\$(ls -A /srv/repo/public/console/beta/aptly)\" ]; then
+            echo 'ERROR: aptly directory empty or missing after deployment'
+            exit 1
+          fi
+          
+          # Verify install.sh has correct domain
+          if ! grep -q 'REPO_HOST=\"repo.cloud.strettch.com\"' /srv/repo/public/console/beta/install.sh; then
+            echo 'ERROR: install.sh has incorrect domain'
+            exit 1
+          fi
+          
+          echo '✅ Repository deployment validation passed'
+        "
         
         echo "✅ Beta deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.com/console/beta/"
