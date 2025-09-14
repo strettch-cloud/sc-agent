@@ -135,6 +135,15 @@ elif [ ${HEALTH_STATUS} -eq 2 ]; then
     repair_package || exit 1
 fi
 
+# Remember if service was running before update
+SERVICE_WAS_RUNNING=false
+if systemctl is-active --quiet "${PACKAGE_NAME}"; then
+    SERVICE_WAS_RUNNING=true
+    log "INFO" "Service is currently running, will restart after update"
+else
+    log "INFO" "Service is not running, will remain stopped after update"
+fi
+
 # Update package lists with retry
 for attempt in $(seq 1 ${MAX_RETRIES}); do
     log "INFO" "Updating package lists (attempt ${attempt}/${MAX_RETRIES})"
@@ -216,27 +225,32 @@ for attempt in $(seq 1 ${MAX_RETRIES}); do
 done
 
 if [ "${UPDATE_SUCCESS}" = true ]; then
-    # Check if service needs restart
-    if systemctl is-active --quiet ${PACKAGE_NAME} 2>/dev/null; then
-        log "INFO" "Restarting service to apply update..."
-        
-        # Give service time to shut down gracefully
-        if systemctl restart ${PACKAGE_NAME} 2>&1; then
-            sleep 2
+    # Check if service needs restart based on original state
+    if [ "$SERVICE_WAS_RUNNING" = true ]; then
+        if systemctl is-active --quiet ${PACKAGE_NAME} 2>/dev/null; then
+            log "INFO" "Restarting service to apply update..."
             
-            # Verify service is running
-            if systemctl is-active --quiet ${PACKAGE_NAME} 2>/dev/null; then
-                log "INFO" "Service restarted successfully"
+            # Give service time to shut down gracefully
+            if systemctl restart ${PACKAGE_NAME} 2>&1; then
+                sleep 2
+                
+                # Verify service is running
+                if systemctl is-active --quiet ${PACKAGE_NAME} 2>/dev/null; then
+                    log "INFO" "Service restarted successfully"
+                else
+                    log "ERROR" "Service failed to restart after update"
+                    log "INFO" "Attempting to start service..."
+                    systemctl start ${PACKAGE_NAME} 2>&1 || true
+                fi
             else
-                log "ERROR" "Service failed to restart after update"
-                log "INFO" "Attempting to start service..."
-                systemctl start ${PACKAGE_NAME} 2>&1 || true
+                log "ERROR" "Failed to restart service"
             fi
         else
-            log "ERROR" "Failed to restart service"
+            log "INFO" "Service was running but not active after update, attempting to start..."
+            systemctl start ${PACKAGE_NAME} 2>&1 || true
         fi
     else
-        log "INFO" "Service not running, skipping restart"
+        log "INFO" "Service was not running before update, leaving stopped"
     fi
     
     log "INFO" "Update completed successfully"
