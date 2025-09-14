@@ -6,6 +6,9 @@
 
 set -e
 
+# Enhanced error handling
+trap 'echo "❌ Error occurred in setup_repo.sh at line $LINENO. Exit code: $?" >&2' ERR
+
 # --- Configuration ---
 ORG_NAME="strettch"
 GPG_EMAIL="engineering@strettch.com"
@@ -262,10 +265,46 @@ sudo chown -R caddy:caddy /srv/repo/public 2>/dev/null || sudo chown -R www-data
 sudo chmod -R 755 /srv/repo/public
 
 echo "--- [Step 6/7] Repository files configured..."
-echo "--- [Step 7/7] Finalizing setup..."
+echo "--- [Step 7/7] Finalizing setup and validation..."
+
+# Validate the deployment
+echo "🔍 Validating repository setup..."
+
+# Check that required files were created
+if [ ! -f "${INSTALL_SCRIPT_PATH}" ]; then
+    echo "❌ ERROR: install.sh was not created at ${INSTALL_SCRIPT_PATH}" >&2
+    exit 1
+fi
+
+if [ ! -f "${WEB_ROOT_DIR}/${GPG_PUBLIC_KEY_FILE}" ]; then
+    echo "❌ ERROR: GPG public key was not created" >&2
+    exit 1
+fi
+
+if [ ! -d "${WEB_ROOT_DIR}/aptly" ] || [ -z "$(ls -A "${WEB_ROOT_DIR}/aptly")" ]; then
+    echo "❌ ERROR: aptly directory is empty or missing" >&2
+    exit 1
+fi
+
+# Verify install.sh has correct domain
+if ! grep -q "REPO_HOST=\"${REPO_DOMAIN}\"" "${INSTALL_SCRIPT_PATH}"; then
+    echo "❌ ERROR: install.sh has incorrect domain. Expected: ${REPO_DOMAIN}" >&2
+    grep "REPO_HOST=" "${INSTALL_SCRIPT_PATH}" >&2 || true
+    exit 1
+fi
+
+# Check file permissions
+if [ ! -x "${INSTALL_SCRIPT_PATH}" ]; then
+    echo "❌ ERROR: install.sh is not executable" >&2
+    exit 1
+fi
+
+echo "✅ All validation checks passed!"
 echo
 echo "========================================================================"
 echo "✅ Repository setup complete!"
-echo "To install the agent on a client machine, run:"
-echo "curl -sSL https://${REPO_DOMAIN}/${REPO_URL_PATH}/install.sh | sudo bash"
-echo "======================================================================="
+echo "📦 Repository type: ${RELEASE_TYPE}"
+echo "📍 Repository URL: https://${REPO_DOMAIN}/${REPO_URL_PATH}/"
+echo "🔧 Install command:"
+echo "   curl -sSL https://${REPO_DOMAIN}/${REPO_URL_PATH}/install.sh | sudo bash"
+echo "========================================================================"
