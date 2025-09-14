@@ -240,8 +240,55 @@ jobs:
         ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
         
         # Update codebase and deploy packages  
+        echo "🔄 Uploading packages and updating repository server..."
         scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-console-agent/"
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && RELEASE_TYPE=stable ./setup_repo.sh"
+        
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "
+          set -e
+          cd /root/sc-console-agent
+          
+          echo '--- Updating git repository ---'
+          git remote set-url origin git@github.com:strettch/sc-console-agent.git
+          git checkout .
+          git clean -fd
+          git checkout dev
+          git fetch origin dev
+          git reset --hard origin/dev
+          
+          echo '--- Cleaning up conflicting tags ---'
+          git tag -d v*-beta.* 2>/dev/null || true
+          git tag -d v*.*.* 2>/dev/null || true
+          git fetch --tags
+          
+          echo '--- Running repository setup ---'
+          RELEASE_TYPE=stable ./setup_repo.sh
+          
+          echo '--- Validating deployment ---'
+          if [ ! -f /srv/repo/public/console/install.sh ]; then
+            echo 'ERROR: install.sh not found after deployment'
+            exit 1
+          fi
+          
+          if [ ! -d /srv/repo/public/console/aptly ] || [ -z \"\$(ls -A /srv/repo/public/console/aptly)\" ]; then
+            echo 'ERROR: aptly directory empty or missing after deployment'
+            exit 1
+          fi
+          
+          # Verify install.sh has correct domain
+          if ! grep -q 'REPO_HOST=\"repo.cloud.strettch.com\"' /srv/repo/public/console/install.sh; then
+            echo 'ERROR: install.sh has incorrect domain'
+            exit 1
+          fi
+          
+          # Test that the install script works
+          echo '--- Testing installation endpoint ---'
+          if ! curl -fsSL https://repo.cloud.strettch.com/console/install.sh > /dev/null; then
+            echo 'ERROR: install.sh not accessible via HTTPS'
+            exit 1
+          fi
+          
+          echo '✅ Repository deployment validation passed'
+        "
         
         echo "✅ Deployment completed successfully!"
         echo "📦 Repository updated at: https://repo.cloud.strettch.com/console/"
