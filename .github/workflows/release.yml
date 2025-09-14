@@ -29,7 +29,12 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Validate version format
+    - name: Set up Python (for version validation)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Validate version format and increment
       id: validate
       run: |
         VERSION="${{ github.event.inputs.version }}"
@@ -41,30 +46,56 @@ jobs:
         fi
         
         # Check if version already exists
-        if git tag -l | grep -q "^v$VERSION$"; then
-          echo "Error: Version v$VERSION already exists"
+        if git tag -l | grep -q "^$VERSION$"; then
+          echo "Error: Version $VERSION already exists"
           exit 1
         fi
         
         # Get last stable release
-        LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "v0.0.0")
-        LAST_STABLE_CLEAN=${LAST_STABLE#v}
+        LAST_STABLE=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | tr -d '\n' || echo "")
+        
+        # Sanitize and set default if no stable releases found
+        if [ -z "$LAST_STABLE" ] || [ "$LAST_STABLE" = " " ]; then
+            LAST_STABLE_CLEAN="0.0.0"
+        else
+            # Remove any whitespace and validate format
+            LAST_STABLE_CLEAN=$(echo "$LAST_STABLE" | tr -d '[:space:]')
+            if [[ ! $LAST_STABLE_CLEAN =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                LAST_STABLE_CLEAN="0.0.0"
+            fi
+        fi
         
         echo "Last stable version: $LAST_STABLE_CLEAN"
         echo "New version: $VERSION"
         echo "Release type: ${{ github.event.inputs.release_type }}"
+        
+        # Install packaging library
+        python3 -m pip install --user packaging
         
         # Validate version increment
         python3 << EOF
         import sys
         from packaging import version
         
-        last = "$LAST_STABLE_CLEAN".split('.')
-        new = "$VERSION".split('.')
-        release_type = "${{ github.event.inputs.release_type }}"
+        # Sanitize inputs
+        last_version = "$LAST_STABLE_CLEAN".strip()
+        new_version = "$VERSION".strip()
+        release_type = "${{ github.event.inputs.release_type }}".strip()
         
-        last_major, last_minor, last_patch = int(last[0]), int(last[1]), int(last[2])
-        new_major, new_minor, new_patch = int(new[0]), int(new[1]), int(new[2])
+        # Parse versions with error handling
+        try:
+            last = last_version.split('.')
+            last_major, last_minor, last_patch = map(int, last)
+        except (ValueError, IndexError):
+            print(f"Warning: Could not parse last version '{last_version}', using 0.0.0")
+            last_major, last_minor, last_patch = 0, 0, 0
+            
+        try:
+            new = new_version.split('.')
+            new_major, new_minor, new_patch = map(int, new)
+        except (ValueError, IndexError):
+            print(f"Error: Could not parse new version '{new_version}'")
+            sys.exit(1)
         
         if release_type == "major":
             expected = f"{last_major + 1}.0.0"
@@ -80,7 +111,7 @@ jobs:
         print(f"Version validation passed: $VERSION is a valid {release_type} release")
         EOF
         
-        echo "version=v$VERSION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
 
   stable-release:
     name: Build and Deploy Stable Release
@@ -98,20 +129,10 @@ jobs:
         fetch-depth: 0
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: '1.21'
-
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
+        cache: true
 
     - name: Generate comprehensive changelog
       id: changelog
@@ -122,55 +143,108 @@ jobs:
         echo "$CHANGELOG" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Build binary
+    - name: Build binaries for multiple architectures
       env:
         VERSION: ${{ needs.validate-version.outputs.version }}
       run: |
+        # Build for amd64
         make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
+        mv build/sc-console-agent build/sc-console-agent-linux-amd64
+        
+        # Build for arm64
+        make GOOS=linux GOARCH=arm64 build VERSION=$VERSION
+        mv build/sc-console-agent build/sc-console-agent-linux-arm64
+        
+        # Generate checksums
+        cd build
+        sha256sum sc-console-agent-* > checksums.sha256
+        cat checksums.sha256
 
-    - name: Install packaging dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ruby ruby-dev build-essential
-        sudo gem install fpm
+    - name: Install packaging dependencies 
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: ruby ruby-dev build-essential rpm
+        version: 1.0
 
-    - name: Build package
+    - name: Setup Ruby and install FPM
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: false
+    
+    - name: Install FPM gem
+      run: gem install fpm --no-document
+
+    - name: Build packages for multiple architectures
       env:
         VERSION: ${{ needs.validate-version.outputs.version }}
       run: |
-        # Create staging directory
-        STAGING_DIR="/tmp/sc-agent-build"
-        mkdir -p "${STAGING_DIR}/usr/local/bin" "${STAGING_DIR}/etc/sc-agent" "${STAGING_DIR}/etc/systemd/system"
+        # Build packages for each architecture
+        for arch in amd64 arm64; do
+          echo "Building package for ${arch}..."
+          
+          # Create staging directory
+          STAGING_DIR="/tmp/sc-console-agent-build-${arch}"
+          mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
+          
+          # Copy binary for specific architecture
+          cp build/sc-console-agent-linux-${arch} "${STAGING_DIR}/usr/bin/sc-console-agent"
+          chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent"
+          
+          # Copy scripts and configs
+          cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/bin/"
+          chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent-updater.sh"
+          cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
+          cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
         
-        # Copy files
-        cp build/sc-agent "${STAGING_DIR}/usr/local/bin/"
-        cp packaging/scripts/start-sc-agent.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/start-sc-agent.sh"
-        cp packaging/scripts/sc-agent-updater.sh "${STAGING_DIR}/usr/local/bin/"
-        chmod +x "${STAGING_DIR}/usr/local/bin/sc-agent-updater.sh"
-        cp config.example.yaml "${STAGING_DIR}/etc/sc-agent/config.yaml"
-        cp packaging/systemd/sc-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-agent-updater.service "${STAGING_DIR}/etc/systemd/system/"
+          # Build DEB package
+          fpm -s dir -t deb -n sc-console-agent -v ${VERSION} \
+            -a ${arch} \
+            -C "${STAGING_DIR}/" \
+            --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
+            --maintainer "engineering@strettch.com" \
+            --url "https://github.com/strettch/sc-console-agent" \
+            --depends "libc6" --depends "dmidecode" --depends "jq" --depends "curl" \
+            --after-install "packaging/scripts/post-install.sh" \
+            --before-remove "packaging/scripts/pre-remove.sh" \
+            --deb-systemd "packaging/systemd/sc-console-agent.service" \
+            --deb-systemd "packaging/systemd/sc-console-agent-update-scheduler.timer"
+          
+          # Build RPM package
+          fpm -s dir -t rpm -n sc-console-agent -v ${VERSION} \
+            -a ${arch} \
+            -C "${STAGING_DIR}/" \
+            --description "Strettch Cloud Agent - Enabling secure console access and instance management." \
+            --maintainer "engineering@strettch.com" \
+            --url "https://github.com/strettch/sc-console-agent" \
+            --depends "glibc" --depends "dmidecode" --depends "jq" --depends "curl" \
+            --after-install "packaging/scripts/post-install.sh" \
+            --before-remove "packaging/scripts/pre-remove.sh"
+        done
         
-        # Build package
-        fpm -s dir -t deb -n sc-agent -v ${VERSION#v} \
-          -C "${STAGING_DIR}/" \
-          --description "SC Agent for system monitoring" \
-          --maintainer "engineering@strettch.com" \
-          --url "https://github.com/strettch/sc-agent" \
-          --depends "libc6" --depends "dmidecode" \
-          --after-install "packaging/scripts/post-install.sh" \
-          --before-remove "packaging/scripts/pre-remove.sh"
+        # Generate checksums for packages
+        sha256sum *.deb *.rpm > packages.sha256
+        cat packages.sha256
 
     - name: Deploy to repository
       env:
         REPO_SSH_KEY: ${{ secrets.REPO_SSH_KEY }}
         REPO_HOST: ${{ secrets.REPO_HOST }}
         REPO_USER: ${{ secrets.REPO_USER }}
-        VERSION: ${{ needs.validate-version.outputs.version }}
       run: |
-        chmod +x .github/scripts/deploy-to-repo.sh
-        .github/scripts/deploy-to-repo.sh stable sc-agent_${VERSION#v}_amd64.deb
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "$REPO_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
+        
+        # Update codebase and deploy packages  
+        scp -i ~/.ssh/deploy_key *.deb *.rpm "${REPO_USER}@${REPO_HOST}:/root/sc-console-agent/"
+        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "cd /root/sc-console-agent && git remote set-url origin git@github.com:strettch/sc-console-agent.git && git checkout . && git clean -fd && git checkout main && git fetch origin main && git reset --hard origin/main && RELEASE_TYPE=stable ./setup_repo.sh"
+        
+        echo "✅ Deployment completed successfully!"
+        echo "📦 Repository updated at: https://repo.cloud.strettch.com/console/"
 
     - name: Create Git tag
       run: |
@@ -191,7 +265,7 @@ jobs:
           
           ### Installation
           ```bash
-          curl -sSL https://sc.repo.cloud.strettch.dev/install.sh | sudo bash
+          curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash
           ```
           
           ### Changes since last release:
