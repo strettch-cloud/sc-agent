@@ -1,0 +1,30 @@
+[Unit]
+Description=SC Console Agent - Secure VM console access management
+Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+After=network-online.target sshd.service
+Wants=network-online.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/usr/bin/sc-console-agent
+Restart=always
+RestartSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Environment
+Environment="PATH=/usr/local/sbin:/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EnvironmentFile=-/etc/sc-console-agent/environment
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=SCConsoleAgent
+SyslogLevel=info
+
+[Install]
+WantedBy=multi-user.target
