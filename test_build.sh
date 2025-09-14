@@ -33,7 +33,7 @@ cp "packaging/systemd/sc-console-agent-update-scheduler.timer" "${STAGING_DIR}/e
 echo "Testing .deb package creation..."
 fpm -s dir -t deb \
     -n ${PACKAGE_NAME} \
-    -v ${PACKAGE_VERSION#v} \
+    -v ${PACKAGE_VERSION} \
     -C "${STAGING_DIR}/" \
     --description "SC Agent for SSH access management" \
     --maintainer "${GPG_EMAIL}" \
@@ -44,6 +44,6 @@ fpm -s dir -t deb \
     --deb-systemd "packaging/systemd/sc-console-agent.service" \
     --deb-no-default-config-files
 
-echo "✅ Package built successfully: ${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb"
+echo "✅ Package built successfully: ${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64.deb"
 echo "Package info:"
-dpkg-deb --info "${PACKAGE_NAME}_${PACKAGE_VERSION#v}_amd64.deb"
+dpkg-deb --info "${PACKAGE_NAME}_${PACKAGE_VERSION}_amd64.deb"

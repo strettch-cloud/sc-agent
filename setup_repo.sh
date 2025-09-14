@@ -69,7 +69,7 @@ rm -f ${PACKAGE_NAME}_*.deb
 
 echo "--- [Step 2/7] Building Go binary via Makefile..."
 # Force VERSION to use the clean tag version
-GOOS=linux GOARCH=amd64 make build VERSION=v${PACKAGE_VERSION}
+GOOS=linux GOARCH=amd64 make build VERSION=${PACKAGE_VERSION}
 
 # --- Pre-flight Checks ---
 echo "Checking required files..."
