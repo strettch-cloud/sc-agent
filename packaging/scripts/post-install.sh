@@ -1,23 +1,155 @@
-#!/bin/sh
+#!/bin/bash
+# SC-Agent Post-Installation Script
+# Purpose: Configure directories, permissions, and start services after package installation
+# Triggered by: APT package manager automatically after installing sc-console-agent.deb
 
-SERVICE_NAME="sc-agent.service"
+set -euo pipefail
 
-echo "Configuring ${SERVICE_NAME}..."
+# Define service names used throughout the script
+readonly SERVICE_NAME="sc-console-agent.service"
+readonly UPDATER_SERVICE="sc-console-agent-update-scheduler.service"
+readonly UPDATER_TIMER="sc-console-agent-update-scheduler.timer"
 
-systemctl daemon-reload
+# Define directories
+readonly RUNTIME_DIR="/var/run/sc-console-agent"
+readonly CONFIG_DIR="/etc/sc-console-agent"
 
-if ! systemctl is-enabled --quiet "${SERVICE_NAME}"; then
-    echo "Enabling ${SERVICE_NAME}..."
-    systemctl enable "${SERVICE_NAME}"
-else
-    echo "${SERVICE_NAME} is already enabled."
+# Helper function for colored output
+print_status() {
+    local status=$1
+    local message=$2
+    case $status in
+        "info") echo "ℹ️  $message" ;;
+        "success") echo "✅ $message" ;;
+        "warning") echo "⚠️  $message" ;;
+        "error") echo "❌ $message" ;;
+    esac
+}
+
+echo "Configuring SC-Agent..."
+
+# Create necessary directories with proper ownership
+print_status "info" "Creating required directories..."
+install -d -m 750 "$RUNTIME_DIR" 
+install -d -m 755 "$CONFIG_DIR"
+
+# Create default config if it doesn't exist
+if [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
+    print_status "info" "Creating default configuration..."
+    cat > "${CONFIG_DIR}/config.yaml" <<EOF
+# SC-Agent Configuration
+EOF
+    chmod 644 "${CONFIG_DIR}/config.yaml"
 fi
 
-systemctl reset-failed "${SERVICE_NAME}" || true
+# Reload systemd to recognize new service files
+print_status "info" "Reloading systemd configuration..."
+if ! systemctl daemon-reload; then
+    print_status "error" "Failed to reload systemd"
+    exit 1
+fi
 
-if ! systemctl is-active --quiet "${SERVICE_NAME}"; then
-    echo "Starting ${SERVICE_NAME}..."
-    systemctl start "${SERVICE_NAME}" || echo "Warning: ${SERVICE_NAME} could not be started immediately. Please check 'systemctl status ${SERVICE_NAME}' and 'journalctl -u ${SERVICE_NAME}' for details."
+# Function to safely enable service
+enable_service() {
+    local service=$1
+    if ! systemctl is-enabled --quiet "$service" 2>/dev/null; then
+        print_status "info" "Enabling $service..."
+        if systemctl enable "$service" 2>/dev/null; then
+            print_status "success" "$service enabled"
+        else
+            print_status "warning" "Could not enable $service"
+            return 1
+        fi
+    else
+        print_status "info" "$service is already enabled"
+    fi
+    return 0
+}
+
+# Enable services
+enable_service "${SERVICE_NAME}"
+enable_service "${UPDATER_TIMER}"
+
+# Clear any previous failed states
+systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
+systemctl reset-failed "${UPDATER_SERVICE}" 2>/dev/null || true
+systemctl reset-failed "${UPDATER_TIMER}" 2>/dev/null || true
+
+# Function to start/restart service
+start_or_restart_service() {
+    local service=$1
+    local is_timer=false
+    
+    [[ "$service" == *.timer ]] && is_timer=true
+    
+    if systemctl is-active --quiet "$service" 2>/dev/null; then
+        print_status "info" "Restarting $service to apply updates..."
+        if systemctl restart "$service"; then
+            print_status "success" "$service restarted successfully"
+        else
+            print_status "warning" "$service restart failed"
+            return 1
+        fi
+    else
+        print_status "info" "Starting $service..."
+        if systemctl start "$service"; then
+            print_status "success" "$service started successfully"
+        else
+            print_status "warning" "$service could not be started"
+            if [ "$is_timer" = false ]; then
+                echo "  Please check 'systemctl status $service' for details"
+                echo "  View logs with: journalctl -u $service -n 50"
+            fi
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Start services (skip if auto-updater is handling this)
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" != "1" ]; then
+    print_status "info" "Starting services..."
+    start_or_restart_service "${SERVICE_NAME}"
+    start_or_restart_service "${UPDATER_TIMER}"
 else
-    echo "${SERVICE_NAME} is already active."
-fi 
+    print_status "info" "Auto-updater detected, skipping automatic service start"
+fi
+
+# Wait a moment for services to stabilize
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" != "1" ]; then
+    sleep 2
+fi
+
+# Verify services are running (if not managed by auto-updater)
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" != "1" ]; then
+    MAIN_STATUS=$(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || echo "inactive")
+    TIMER_STATUS=$(systemctl is-active "${UPDATER_TIMER}" 2>/dev/null || echo "inactive")
+else
+    MAIN_STATUS="managed-by-updater"
+    TIMER_STATUS="managed-by-updater"
+fi
+
+# Print status summary
+echo ""
+echo "╔════════════════════════════════════╗"
+echo "║ SC-Console-Agent Installation Done ║"
+echo "╚════════════════════════════════════╝"
+echo ""
+echo "Service Status:"
+echo "  • Main Service: $MAIN_STATUS"
+echo "  • Auto-Update:  $TIMER_STATUS"
+echo ""
+echo "Useful Commands:"
+echo "  • Check status:   systemctl status sc-console-agent"
+echo "  • View logs:      journalctl -u sc-console-agent -f"
+echo "  • Configuration:  ${CONFIG_DIR}/config.yaml"
+echo "  • Manual update:  systemctl start ${UPDATER_SERVICE}"
+echo ""
+
+# Exit with appropriate code
+if [ "${SC_AGENT_AUTO_UPDATER:-0}" = "1" ]; then
+    exit 0
+elif [ "$MAIN_STATUS" != "active" ] || [ "$TIMER_STATUS" != "active" ]; then
+    exit 1
+fi
+exit 0
