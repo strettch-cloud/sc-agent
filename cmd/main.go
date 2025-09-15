@@ -11,11 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/pipeline"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/console"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/pipeline"
 )
 
 const (
@@ -33,17 +32,17 @@ var (
 )
 
 type Agent struct {
-	config       *config.Config
-	logger       *zap.Logger
-	processor    *pipeline.Processor
-	httpHandler  *console.HTTPHandler
-	httpServer   *http.Server
+	config      *config.Config
+	logger      *zap.Logger
+	processor   *pipeline.Processor
+	httpServer  *http.Server
 }
 
 func main() {
 	var (
 		showVersion    = flag.Bool("v", false, "Print version and exit")
-		validateConfig = flag.String("validate-config", "", "Validate configuration file and exit")
+		validateConfig = flag.Bool("validate-config", false, "Validate configuration and exit")
+		configFile     = flag.String("config", "", "Path to configuration file")
 	)
 	flag.Parse()
 
@@ -52,8 +51,14 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *validateConfig != "" {
-		if err := validateConfigFile(*validateConfig); err != nil {
+	// Set config file path if provided
+	if *configFile != "" {
+		os.Setenv("SC_AGENT_CONFIG", *configFile)
+	}
+
+	if *validateConfig {
+		_, err := config.Load()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Configuration validation failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -65,14 +70,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Agent failed: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func validateConfigFile(configPath string) error {
-	if err := os.Setenv("SC_AGENT_CONFIG", configPath); err != nil {
-		return fmt.Errorf("failed to set config path: %w", err)
-	}
-	_, err := config.Load()
-	return err
 }
 
 func runAgent() error {
@@ -93,8 +90,8 @@ func runAgent() error {
 func (a *Agent) initialize() error {
 	cfg, err := config.Load()
 	if err != nil {
-		if strings.Contains(err.Error(), "resource_id cannot be determined") {
-			a.logger.Fatal("Resource ID detection failed",
+		if strings.Contains(err.Error(), "ResourceID cannot be determined") {
+			a.logger.Fatal("Resource_id detection failed",
 				zap.Error(err),
 				zap.String("help", "Ensure dmidecode is installed or set SC_RESOURCE_ID manually"))
 		}
@@ -106,10 +103,8 @@ func (a *Agent) initialize() error {
 		a.logger = initLogger(cfg.LogLevel)
 	}
 
-	a.logger.Info("Starting Strettch Cloud Agent",
+	a.logger.Info("Starting Strettch Cloud Console Agent",
 		zap.String("version", version),
-		zap.String("resource_id", cfg.ResourceID),
-		zap.Int("udp_port", cfg.Console.UDPKnockPort),
 		zap.Int("http_port", cfg.Console.HTTPNotifyPort))
 
 	if a.processor, err = pipeline.NewProcessor(cfg, a.logger); err != nil {
@@ -120,13 +115,9 @@ func (a *Agent) initialize() error {
 		return fmt.Errorf("processor start failed: %w", err)
 	}
 
-	if a.httpHandler, err = console.NewHTTPHandler(cfg, a.logger); err != nil {
-		return fmt.Errorf("HTTP handler creation failed: %w", err)
-	}
 
 	a.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Console.HTTPNotifyPort),
-		Handler:           a.httpHandler,
 		ReadHeaderTimeout: defaultReadHeaderTimeout,
 		ReadTimeout:       defaultReadTimeout,
 		WriteTimeout:      defaultWriteTimeout,
@@ -165,11 +156,6 @@ func (a *Agent) shutdown() error {
 
 	if err := a.processor.Stop(); err != nil {
 		a.logger.Error("Processor shutdown failed", zap.Error(err))
-		shutdownErr = err
-	}
-
-	if err := a.httpHandler.Close(); err != nil {
-		a.logger.Error("HTTP handler close failed", zap.Error(err))
 		shutdownErr = err
 	}
 
