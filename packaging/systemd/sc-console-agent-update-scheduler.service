@@ -1,0 +1,28 @@
+[Unit]
+Description=SC Console Agent - Auto Update Service
+Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sc-console-agent-updater.sh
+User=root
+Group=root
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=SCAgentUpdater
+
+# Timeout settings
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+# Environment
+Environment="DEBIAN_FRONTEND=noninteractive"
+Environment="SC_AGENT_AUTO_UPDATER=1"
+Environment="PATH=/usr/local/sbin:/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
