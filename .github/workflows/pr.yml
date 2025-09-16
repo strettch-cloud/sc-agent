@@ -16,16 +16,16 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.25'
         cache: true
     - name: Run tests
       run: make test
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v4
+      uses: golangci/golangci-lint-action@v8
       with:
-        version: latest
-        skip-pkg-cache: true
+        version: v2.1.6
+        working-directory: .
 
     - name: Build for Linux AMD64
       run: make GOOS=linux GOARCH=amd64 build
