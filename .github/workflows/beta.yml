@@ -1,182 +1,124 @@
+
+# beta.yml - Beta Release Workflow
 name: Beta Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [dev]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/release.yml'
+
+env:
+  GO_VERSION: '1.21'
+  DEBIAN_FRONTEND: noninteractive
 
 jobs:
   beta-release:
-    name: Build and Deploy Beta Release
+    name: Build and Deploy Beta
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev'
     permissions:
-      contents: write  # Required for creating releases
-      actions: read    # Required for downloading artifacts
-      checks: read     # Required for status checks
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-
-    - name: Set up Go
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: ${{ env.GO_VERSION }}
         cache: true
-
+    
+    - name: Cache build dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
     - name: Generate beta version
       id: version
       run: |
         chmod +x .github/scripts/generate-version.sh
         VERSION=$(.github/scripts/generate-version.sh beta)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Generated beta version: $VERSION"
-
-    - name: Create Git tag
+        echo "::notice::Generated beta version: $VERSION"
+    
+    - name: Build binary
       run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git tag -a ${{ steps.version.outputs.version }} -m "Beta release ${{ steps.version.outputs.version }}"
-
+        make build VERSION=${{ steps.version.outputs.version }}
+        # Verify binary was created
+        test -f build/sc-console-agent || exit 1
+    
+    - name: Setup packaging environment
+      run: |
+        # Install FPM
+        sudo apt-get update -qq
+        sudo apt-get install -yqq ruby ruby-dev build-essential
+        sudo gem install --no-document fpm
+    
+    - name: Build package
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        ./scripts/build-package.sh "$VERSION" "beta"
+        # Verify package was created
+        test -f "sc-console-agent_${VERSION}_amd64.deb" || exit 1
+    
     - name: Generate changelog
       id: changelog
       run: |
         chmod +x .github/scripts/generate-changelog.sh
-        CHANGELOG=$(.github/scripts/generate-changelog.sh beta)
-        echo "changelog<<EOF" >> $GITHUB_OUTPUT
-        echo "$CHANGELOG" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
-    - name: Build binary
-      env:
-        VERSION: ${{ steps.version.outputs.version }}
-      run: |
-        make GOOS=linux GOARCH=amd64 build VERSION=$VERSION
-
-    - name: Install packaging dependencies 
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: ruby ruby-dev build-essential
-        version: 1.0
-
-    - name: Setup Ruby and install FPM
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.0'
-        bundler-cache: false
+        {
+          echo 'changelog<<EOF'
+          .github/scripts/generate-changelog.sh beta
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
     
-    - name: Install FPM gem
-      run: gem install fpm --no-document
-
-    - name: Build package
-      env:
-        VERSION: ${{ steps.version.outputs.version }}
+    - name: Create and push tag
       run: |
-        # Create staging directory
-        STAGING_DIR="/tmp/sc-console-agent-build"
-        mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
-        
-        # Copy files
-        cp build/sc-console-agent "${STAGING_DIR}/usr/bin/"
-        chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent"
-        cp packaging/scripts/sc-console-agent-updater.sh "${STAGING_DIR}/usr/bin/"
-        chmod +x "${STAGING_DIR}/usr/bin/sc-console-agent-updater.sh"
-        cp packaging/systemd/sc-console-agent.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-console-agent-update-scheduler.service "${STAGING_DIR}/etc/systemd/system/"
-        cp packaging/systemd/sc-console-agent-update-scheduler.timer "${STAGING_DIR}/etc/systemd/system/"
-        
-        # Build package
-        fpm -s dir -t deb -n sc-console-agent -v ${VERSION} \
-          -C "${STAGING_DIR}/" \
-          --description "Strettch Cloud Agent - Enabling secure console access and instance management. (Beta Release)" \
-          --maintainer "engineering@strettch.com" \
-          --url "https://github.com/strettch/sc-console-agent" \
-          --depends "libc6" --depends "dmidecode" \
-          --after-install "packaging/scripts/post-install.sh" \
-          --before-remove "packaging/scripts/pre-remove.sh"
-
-    - name: Push Git tag
-      run: |
-        git push origin ${{ steps.version.outputs.version }}
-
-    - name: Deploy to repository
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a "${{ steps.version.outputs.version }}" \
+          -m "Beta release ${{ steps.version.outputs.version }}"
+        git push origin "${{ steps.version.outputs.version }}"
+    
+    - name: Deploy to repository server
       env:
-        REPO_SSH_KEY: ${{ secrets.REPO_SSH_KEY }}
+        DEPLOY_KEY: ${{ secrets.REPO_SSH_KEY }}
         REPO_HOST: ${{ secrets.REPO_HOST }}
         REPO_USER: ${{ secrets.REPO_USER }}
-        VERSION: ${{ steps.version.outputs.version }}
       run: |
-        # Setup SSH
-        mkdir -p ~/.ssh
-        echo "$REPO_SSH_KEY" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H "$REPO_HOST" >> ~/.ssh/known_hosts
-        
-        # Update codebase on server and build/publish from source
-        echo "🔄 Updating repository server and deploying..."
-        ssh -i ~/.ssh/deploy_key "${REPO_USER}@${REPO_HOST}" "
-          set -e
-          cd /root/sc-console-agent
-          
-          echo '--- Updating git repository ---'
-          git remote set-url origin git@github.com:strettch/sc-console-agent.git
-          git checkout .
-          git clean -fd
-          git checkout main
-          git fetch origin main
-          git reset --hard origin/main
-          git fetch --tags
-          
-          echo '--- Cleaning up conflicting tags ---'
-          git tag -d v*-beta.* 2>/dev/null || true
-          git tag -d v*.*.* 2>/dev/null || true
-          
-          echo '--- Running repository setup ---'
-          RELEASE_TYPE=beta ./setup_repo.sh
-          
-          echo '--- Validating deployment ---'
-          if [ ! -f /srv/repo/public/console/beta/install.sh ]; then
-            echo 'ERROR: install.sh not found after deployment'
-            exit 1
-          fi
-          
-          if [ ! -d /srv/repo/public/console/beta/aptly ] || [ -z \"\$(ls -A /srv/repo/public/console/beta/aptly)\" ]; then
-            echo 'ERROR: aptly directory empty or missing after deployment'
-            exit 1
-          fi
-          
-          # Verify install.sh has correct domain
-          if ! grep -q 'REPO_HOST=\"repo.cloud.strettch.com\"' /srv/repo/public/console/beta/install.sh; then
-            echo 'ERROR: install.sh has incorrect domain'
-            exit 1
-          fi
-          
-          echo '✅ Repository deployment validation passed'
-        "
-        
-        echo "✅ Beta deployment completed successfully!"
-        echo "📦 Repository updated at: https://repo.cloud.strettch.com/console/beta/"
-
+        ./scripts/deploy-to-repo.sh \
+          "${{ steps.version.outputs.version }}" \
+          "beta" \
+          "$DEPLOY_KEY" \
+          "$REPO_HOST" \
+          "$REPO_USER"
+    
     - name: Create GitHub pre-release
       uses: ncipollo/release-action@v1
       with:
         tag: ${{ steps.version.outputs.version }}
-        name: "Beta Release ${{ steps.version.outputs.version }}"
+        name: "Beta ${{ steps.version.outputs.version }}"
         body: |
-          ## Beta Release ${{ steps.version.outputs.version }}
+          ## 🚀 Beta Release
           
-          This is an automated beta release containing the latest changes from the main branch.
+          This is an automated beta release from the main branch.
           
-          ### Installation
-          ```bash
-          curl -sSL https://repo.cloud.strettch.com/console/beta/install.sh | sudo bash
-          ```
-          
-          ### Changes in this beta release:
           ${{ steps.changelog.outputs.changelog }}
           
-          **Note:** This is a beta release. Use stable releases for production deployments.
+          **⚠️ Note:** This is a beta release for testing purposes.
         prerelease: true
         artifacts: "sc-console-agent_*.deb"
         token: ${{ secrets.GITHUB_TOKEN }}
