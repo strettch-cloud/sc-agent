@@ -14,9 +14,10 @@ fi
 # Ensure tags are up to date
 git fetch --tags >/dev/null 2>&1 || true
 
-# Get last tag
+# Get the most recent tag that is an ancestor of the current commit.
+# This is more robust than grabbing the latest tag by name, as it ensures
+# the tag is part of the current branch's history.
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
 
 # Format commit messages
 format_commit() {
@@ -71,7 +72,7 @@ while IFS= read -r line; do
         fi
     fi
 done < <(if [[ -z "$LAST_TAG" ]]; then
-    git log --oneline --pretty=format:"%h %s" HEAD -${MAX_COMMITS}
+    git log --oneline --pretty=format:"%h %s" HEAD -n ${MAX_COMMITS}
 else
     git log --oneline --pretty=format:"%h %s" "${LAST_TAG}..HEAD"
 fi)
@@ -98,11 +99,9 @@ fi
 # Contributors
 echo "### 👥 Contributors"
 
-# Method 1: Use email to derive GitHub usernames (if your team uses GitHub email format)
-# This works if commits use username@users.noreply.github.com format
+# Method 1: Use email to derive GitHub usernames
 get_contributors_from_email() {
-    local range="$1"
-    git log --pretty=format:"%ae" $range | \
+    git log --pretty=format:"%ae" "$@" | \
         grep -E "^[^@]+@users\.noreply\.github\.com$" | \
         sed 's/@users\.noreply\.github\.com$//' | \
         sed 's/^[0-9]*+//' | \
@@ -110,18 +109,16 @@ get_contributors_from_email() {
         sed 's/^/- @/'
 }
 
-# Method 2: Use author names without @ symbol (safer approach)
+# Method 2: Use author names without @ symbol
 get_contributors_by_name() {
-    local range="$1"
-    git log --pretty=format:"%an" $range | \
+    git log --pretty=format:"%an" "$@" | \
         sort -u | \
         sed 's/^/- /'
 }
 
 # Method 3: Use Co-authored-by trailers if present
 get_contributors_from_trailers() {
-    local range="$1"
-    git log --pretty=format:"%b" $range | \
+    git log --pretty=format:"%b" "$@" | \
         grep -E "^Co-authored-by:" | \
         sed 's/Co-authored-by: //' | \
         sed 's/ <.*$//' | \
@@ -129,26 +126,29 @@ get_contributors_from_trailers() {
         sed 's/^/- /'
 }
 
-# Determine the range for contributors
+# Determine the range for contributors using an array for safety
+declare -a RANGE_ARGS
 if [[ -z "$LAST_TAG" ]]; then
-    RANGE="HEAD -${MAX_COMMITS}"
+  # If no tag, use the last 50 commits as an array of arguments
+  RANGE_ARGS=(HEAD -n "${MAX_COMMITS}")
 else
-    RANGE="${LAST_TAG}..HEAD"
+  # If a tag exists, use the range as a single argument in the array
+  RANGE_ARGS=("${LAST_TAG}..HEAD")
 fi
 
 # Try to get GitHub usernames from email first
-GITHUB_CONTRIBUTORS=$(get_contributors_from_email "$RANGE")
+GITHUB_CONTRIBUTORS=$(get_contributors_from_email "${RANGE_ARGS[@]}")
 
 if [[ -n "$GITHUB_CONTRIBUTORS" ]]; then
     # We found GitHub usernames from emails
     echo "$GITHUB_CONTRIBUTORS"
 else
     # Fallback to author names
-    get_contributors_by_name "$RANGE"
+    get_contributors_by_name "${RANGE_ARGS[@]}"
 fi
 
 # Also include co-authors if any
-CO_AUTHORS=$(get_contributors_from_trailers "$RANGE")
+CO_AUTHORS=$(get_contributors_from_trailers "${RANGE_ARGS[@]}")
 if [[ -n "$CO_AUTHORS" ]]; then
     echo ""
     echo "#### Co-authors"
@@ -162,8 +162,8 @@ echo
 echo "### 📥 Installation"
 echo '```bash'
 if [[ "$CHANNEL" == "beta" ]]; then
-    echo 'curl -sSL https://repo.cloud.strettch.com/console/beta/install.sh | sudo bash'
+    echo 'curl -sSL [https://repo.cloud.strettch.com/console/beta/install.sh](https://repo.cloud.strettch.com/console/beta/install.sh) | sudo bash'
 else
-    echo 'curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash'
+    echo 'curl -sSL [https://repo.cloud.strettch.com/console/install.sh](https://repo.cloud.strettch.com/console/install.sh) | sudo bash'
 fi
 echo '```'
