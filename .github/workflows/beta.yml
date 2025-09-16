@@ -75,9 +75,12 @@ jobs:
       id: changelog
       run: |
         chmod +x .github/scripts/generate-changelog.sh
-        .github/scripts/generate-changelog.sh beta > changelog.md
-        echo "changelog=$(cat changelog.md | base64)" >> $GITHUB_OUTPUT
-    
+        if ! .github/scripts/generate-changelog.sh beta > changelog.md; then
+          echo "⚠️ No changelog generated, continuing..."
+          echo "## No changes found" > changelog.md
+        fi
+        echo "changelog=$(cat changelog.md | base64 -w0)" >> $GITHUB_OUTPUT
+
     - name: Create and push tag
       run: |
         git config user.name "github-actions[bot]"
