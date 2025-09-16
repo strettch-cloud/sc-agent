@@ -14,12 +14,9 @@ fi
 # Ensure tags are up to date
 git fetch --tags >/dev/null 2>&1 || true
 
-# Get last tag depending on channel
-if [[ "$CHANNEL" == "stable" ]]; then
-    LAST_TAG=$(git tag -l --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
-else
-    LAST_TAG=$(git tag -l --sort=-version:refname | head -1 || echo "")
-fi
+# Get last tag
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
 
 # Format commit messages
 format_commit() {
