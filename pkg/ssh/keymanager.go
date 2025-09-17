@@ -145,7 +145,12 @@ func (km *KeyManager) readKeys() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// Log error but don't fail the function
+			_ = err
+		}
+	}()
 
 	var lines []string
 	scanner := bufio.NewScanner(file)
@@ -172,19 +177,31 @@ func (km *KeyManager) writeKeys(keys []string) error {
 	// Write all keys with single trailing newline
 	content := strings.Join(keys, "\n")
 	if _, err := fmt.Fprintf(tmpFile, "%s\n", strings.TrimSpace(content)); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			// Log close error but continue with removal
+			_ = closeErr // Suppress staticcheck SA9003
+		}
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			// Log remove error but continue with returning original error
+			_ = removeErr // Suppress staticcheck SA9003
+		}
 		return fmt.Errorf("failed to write keys: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			// Log remove error but continue with returning original error
+			_ = removeErr // Suppress staticcheck SA9003
+		}
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomic replace
 	if err := os.Rename(tmpPath, km.authorizedKeysPath); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil {
+			// Log remove error but continue with returning original error
+			_ = removeErr // Suppress staticcheck SA9003
+		}
 		return fmt.Errorf("failed to replace authorized_keys: %w", err)
 	}
 

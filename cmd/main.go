@@ -53,7 +53,9 @@ func main() {
 
 	// Set config file path if provided
 	if *configFile != "" {
-		os.Setenv("SC_AGENT_CONFIG", *configFile)
+		if err := os.Setenv("SC_AGENT_CONFIG", *configFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to set SC_AGENT_CONFIG environment variable: %v\n", err)
+		}
 	}
 
 	if *validateConfig {
