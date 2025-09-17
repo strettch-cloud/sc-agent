@@ -24,7 +24,7 @@ jobs:
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v8
       with:
-        version: v2.1.6
+        version: v2.4.0
         working-directory: .
 
     - name: Build for Linux AMD64
