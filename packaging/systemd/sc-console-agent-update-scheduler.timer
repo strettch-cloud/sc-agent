@@ -6,8 +6,8 @@ Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
 # Start 5 minutes after boot
 OnBootSec=5min
 
-# Run every 2 hours hour
-OnCalendar=*:0/2:00
+# Run every 1 hour
+OnUnitActiveSec=1h
 
 
 # Add randomized delay to prevent thundering herd
