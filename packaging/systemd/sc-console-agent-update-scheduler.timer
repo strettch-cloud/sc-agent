@@ -1,0 +1,26 @@
+[Unit]
+Description=SC Console Agent - Auto Update Timer (every 2 hours hour)
+Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+
+[Timer]
+# Start 5 minutes after boot
+OnBootSec=5min
+
+# Run every 1 hour
+OnUnitActiveSec=1h
+
+
+# Add randomized delay to prevent thundering herd
+RandomizedDelaySec=10sec
+
+# Persist last trigger time across reboots
+Persistent=true
+
+# Timer accuracy
+AccuracySec=1s
+
+# Service to trigger
+Unit=sc-console-agent-update-scheduler.service
+
+[Install]
+WantedBy=timers.target
