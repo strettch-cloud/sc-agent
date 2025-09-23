@@ -6,12 +6,14 @@ Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
 # Start 5 minutes after boot
 OnBootSec=5min
 
-# Run every 1 hour
+# Run 1 hour after the timer is activated
+OnActiveSec=1h
+
+# Run every 1 hour after the last run
 OnUnitActiveSec=1h
 
-
 # Add randomized delay to prevent thundering herd
-RandomizedDelaySec=10sec
+RandomizedDelaySec=5min
 
 # Persist last trigger time across reboots
 Persistent=true

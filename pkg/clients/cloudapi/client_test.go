@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/metadata"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
 	"go.uber.org/zap"
 )
 

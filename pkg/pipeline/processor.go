@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/cloudapi"
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/metadata"
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/console"
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/ssh"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/cloudapi"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/console"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/ssh"
 	"go.uber.org/zap"
 )
 
@@ -115,10 +115,10 @@ func (p *Processor) Stop() error {
 // initialize fetches initial metadata and configures the UDP listener
 func (p *Processor) initialize() error {
 	p.logger.Info("Initializing with Strettch Cloud Metadata Service")
-	
+
 	ctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
-	
+
 	// Get metadata with infinite retry for startup
 	metadata, err := p.metadataClient.GetMetadataForStartup(ctx, p.config.ResourceID)
 	if err != nil {
@@ -154,7 +154,7 @@ func (p *Processor) processEvents() {
 	defer p.wg.Done()
 
 	eventChan := p.udpListener.GetEventChannel()
-	
+
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -192,7 +192,7 @@ func (p *Processor) handleKnock(event console.UDPKnockEvent) {
 	logger := p.logger.With(
 		zap.String("source_ip", event.SourceIP),
 		zap.Time("knock_time", time.Unix(event.Timestamp, 0)))
-	
+
 	logger.Info("Processing UDP knock")
 
 	ctx, cancel := context.WithTimeout(p.ctx, knockProcessTimeout)

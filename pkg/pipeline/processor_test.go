@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -15,42 +15,42 @@ func TestNewProcessor(t *testing.T) {
 		HTTPTimeout:             30 * time.Second,
 		KeyCleanupInterval:      120 * time.Second,
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	processor, err := NewProcessor(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
-	
+
 	if processor == nil {
 		t.Fatal("Expected non-nil processor")
 	}
-	
+
 	if processor.config != cfg {
 		t.Error("Config not properly set")
 	}
-	
+
 	if processor.logger != logger {
 		t.Error("Logger not properly set")
 	}
-	
+
 	if processor.metadataClient == nil {
 		t.Error("Metadata client should be initialized")
 	}
-	
+
 	if processor.cloudAPIClient == nil {
 		t.Error("Cloud API client should be initialized")
 	}
-	
+
 	if processor.keyManager == nil {
 		t.Error("Key manager should be initialized")
 	}
-	
+
 	if processor.udpListener == nil {
 		t.Error("UDP listener should be initialized")
 	}
-	
+
 	if processor.cleanupTicker == nil {
 		t.Error("Cleanup ticker should be initialized")
 	}
@@ -75,14 +75,14 @@ func TestProcessorStartStop(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	processor, err := NewProcessor(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
-	
+
 	// Test that Stop doesn't panic when called before Start
 	err = processor.Stop()
 	if err != nil {
@@ -123,13 +123,13 @@ func TestProcessorConfiguration(t *testing.T) {
 			expectError: false, // NewProcessor doesn't validate config
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := zap.NewNop()
-			
+
 			processor, err := NewProcessor(tt.config, logger)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
@@ -138,7 +138,7 @@ func TestProcessorConfiguration(t *testing.T) {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
-				
+
 				if processor == nil {
 					t.Error("Expected processor but got nil")
 				}

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/connectionretry"
+	retry "github.com/strettch/strettch-cloud/sc-agent/pkg/connectionretry"
 	"go.uber.org/zap"
 )
 
@@ -18,7 +18,7 @@ const (
 	HeaderAccept      = "Accept"
 	HeaderXResourceID = "X-Resource-ID"
 	AcceptJSON        = "application/json"
-	
+
 	// Default settings
 	defaultCacheDuration       = 30 * time.Minute
 	defaultMaxIdleConns        = 10
@@ -46,7 +46,7 @@ type Client struct {
 	httpClient    *http.Client
 	logger        *zap.Logger
 	cacheDuration time.Duration
-	
+
 	// Cache fields
 	mu        sync.RWMutex
 	cache     *Info
@@ -60,7 +60,7 @@ func NewClient(endpoint string, timeout time.Duration, logger *zap.Logger) *Clie
 		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
 		IdleConnTimeout:     defaultIdleConnTimeout,
 	}
-	
+
 	return &Client{
 		endpoint: endpoint,
 		httpClient: &http.Client{
@@ -86,7 +86,7 @@ func (c *Client) GetMetadata(ctx context.Context, resourceID string) (*Info, err
 // GetMetadataWithRetry retrieves metadata with retry logic
 func (c *Client) GetMetadataWithRetry(ctx context.Context, resourceID string, maxAttempts int) (*Info, error) {
 	cfg := retry.Default().WithMaxAttempts(maxAttempts)
-	
+
 	return retry.Execute(ctx, c.logger, "get-metadata",
 		func(ctx context.Context) (*Info, error) {
 			return c.GetMetadata(ctx, resourceID)
@@ -159,7 +159,7 @@ func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, e
 	// Update cache
 	c.cache = info
 	c.cacheTime = time.Now()
-	
+
 	c.logger.Debug("Metadata cached",
 		zap.Time("cached_at", c.cacheTime),
 		zap.Duration("ttl", c.cacheDuration))
@@ -192,13 +192,13 @@ func (c *Client) doRequest(ctx context.Context, url, resourceID string) (*http.R
 func (c *Client) getCached() *Info {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	if c.cache != nil && time.Since(c.cacheTime) < c.cacheDuration {
 		ttl := c.cacheDuration - time.Since(c.cacheTime)
 		c.logger.Debug("Using cached metadata", zap.Duration("ttl", ttl))
 		return c.cache
 	}
-	
+
 	return nil
 }
 

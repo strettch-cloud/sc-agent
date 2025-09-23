@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -23,30 +23,30 @@ func TestNewUDPListener(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	listener, err := NewUDPListener(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	
+
 	if listener == nil {
 		t.Fatal("Expected non-nil listener")
 	}
-	
+
 	if listener.config != cfg {
 		t.Error("Config not properly set")
 	}
-	
+
 	if listener.logger != logger {
 		t.Error("Logger not properly set")
 	}
-	
+
 	if listener.verifier != nil {
 		t.Error("Verifier should be nil initially")
 	}
-	
+
 	if listener.eventChan == nil {
 		t.Error("Event channel should be initialized")
 	}
@@ -61,25 +61,25 @@ func TestUDPListenerStartStop(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	listener, err := NewUDPListener(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	
+
 	// Start listener
 	err = listener.Start()
 	if err != nil {
 		t.Fatalf("Failed to start UDP listener: %v", err)
 	}
-	
+
 	// Verify connection is established
 	if listener.conn == nil {
 		t.Error("Connection should be established after start")
 	}
-	
+
 	// Stop listener
 	err = listener.Stop()
 	if err != nil {
@@ -96,21 +96,21 @@ func TestUpdatePublicKey(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	listener, err := NewUDPListener(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	
+
 	// Generate test key
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate test key: %v", err)
 	}
 	publicKeyHex := hex.EncodeToString(publicKey)
-	
+
 	tests := []struct {
 		name         string
 		publicKeyHex string
@@ -140,11 +140,11 @@ func TestUpdatePublicKey(t *testing.T) {
 			expectError:  false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := listener.UpdatePublicKey(tt.publicKeyHex)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")
@@ -155,16 +155,16 @@ func TestUpdatePublicKey(t *testing.T) {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
 				}
-				
+
 				listener.mu.RLock()
 				hasVerifier := listener.verifier != nil
 				keyMatches := listener.publicKeyHex == tt.publicKeyHex
 				listener.mu.RUnlock()
-				
+
 				if !hasVerifier {
 					t.Error("Verifier should be set after successful key update")
 				}
-				
+
 				if !keyMatches {
 					t.Error("Public key hex should be stored")
 				}
@@ -182,19 +182,19 @@ func TestGetEventChannel(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	listener, err := NewUDPListener(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	
+
 	eventChan := listener.GetEventChannel()
 	if eventChan == nil {
 		t.Error("Event channel should not be nil")
 	}
-	
+
 	// Check that it's the same channel
 	if eventChan != listener.eventChan {
 		t.Error("Returned channel should be the same as internal channel")
@@ -210,45 +210,45 @@ func TestHandlePacket(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	listener, err := NewUDPListener(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	
+
 	// Generate test key pair
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate test key: %v", err)
 	}
 	publicKeyHex := hex.EncodeToString(publicKey)
-	
+
 	// Set up public key
 	err = listener.UpdatePublicKey(publicKeyHex)
 	if err != nil {
 		t.Fatalf("Failed to update public key: %v", err)
 	}
-	
+
 	// Helper function to create a valid packet
 	createValidPacket := func(resourceID string, timestamp int64) []byte {
 		message := fmt.Sprintf("%s|%d", resourceID, timestamp)
 		signature := ed25519.Sign(privateKey, []byte(message))
-		
+
 		packet := make([]byte, 8+len(signature))
 		binary.BigEndian.PutUint64(packet[:8], uint64(timestamp))
 		copy(packet[8:], signature)
-		
+
 		return packet
 	}
-	
+
 	tests := []struct {
-		name           string
-		packetFunc     func() []byte
-		sourceIP       string
-		expectEvent    bool
-		setupVerifier  bool
+		name          string
+		packetFunc    func() []byte
+		sourceIP      string
+		expectEvent   bool
+		setupVerifier bool
 	}{
 		{
 			name: "valid packet",
@@ -288,7 +288,7 @@ func TestHandlePacket(t *testing.T) {
 			setupVerifier: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset verifier state
@@ -302,16 +302,16 @@ func TestHandlePacket(t *testing.T) {
 				listener.verifier = nil
 				listener.mu.Unlock()
 			}
-			
+
 			// Clear any existing events
 			select {
 			case <-listener.eventChan:
 			default:
 			}
-			
+
 			packet := tt.packetFunc()
 			listener.handlePacket(packet, tt.sourceIP)
-			
+
 			// Check if event was generated
 			select {
 			case event := <-listener.eventChan:
@@ -337,15 +337,15 @@ func TestUDPKnockEvent(t *testing.T) {
 		Timestamp:  time.Now().Unix(),
 		VerifiedAt: time.Now(),
 	}
-	
+
 	if event.SourceIP != "192.168.1.100" {
 		t.Errorf("Expected source IP 192.168.1.100, got %s", event.SourceIP)
 	}
-	
+
 	if event.Timestamp == 0 {
 		t.Error("Timestamp should not be zero")
 	}
-	
+
 	if event.VerifiedAt.IsZero() {
 		t.Error("VerifiedAt should not be zero")
 	}
@@ -355,11 +355,11 @@ func TestConstants(t *testing.T) {
 	if eventChannelBuffer != 10 {
 		t.Errorf("Expected eventChannelBuffer to be 10, got %d", eventChannelBuffer)
 	}
-	
+
 	if udpReadTimeout != 1*time.Second {
 		t.Errorf("Expected udpReadTimeout to be 1s, got %v", udpReadTimeout)
 	}
-	
+
 	if minPacketSize != 8+64 {
 		t.Errorf("Expected minPacketSize to be 72, got %d", minPacketSize)
 	}
@@ -375,27 +375,27 @@ func TestUDPListenerIntegration(t *testing.T) {
 			SignatureTimeout: 30,
 		},
 	}
-	
+
 	logger := zap.NewNop()
-	
+
 	listener, err := NewUDPListener(cfg, logger)
 	if err != nil {
 		t.Fatalf("Failed to create UDP listener: %v", err)
 	}
-	
+
 	// Generate test key pair
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate test key: %v", err)
 	}
 	publicKeyHex := hex.EncodeToString(publicKey)
-	
+
 	// Set up public key
 	err = listener.UpdatePublicKey(publicKeyHex)
 	if err != nil {
 		t.Fatalf("Failed to update public key: %v", err)
 	}
-	
+
 	// Start listener
 	err = listener.Start()
 	if err != nil {
@@ -406,20 +406,20 @@ func TestUDPListenerIntegration(t *testing.T) {
 			t.Logf("Failed to stop listener: %v", err)
 		}
 	}()
-	
+
 	// Get the actual port that was assigned
 	addr := listener.conn.LocalAddr().(*net.UDPAddr)
 	port := addr.Port
-	
+
 	// Create a valid packet
 	timestamp := time.Now().Unix()
 	message := fmt.Sprintf("%s|%d", cfg.ResourceID, timestamp)
 	signature := ed25519.Sign(privateKey, []byte(message))
-	
+
 	packet := make([]byte, 8+len(signature))
 	binary.BigEndian.PutUint64(packet[:8], uint64(timestamp))
 	copy(packet[8:], signature)
-	
+
 	// Send packet
 	clientConn, err := net.Dial("udp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
@@ -430,12 +430,12 @@ func TestUDPListenerIntegration(t *testing.T) {
 			t.Logf("Failed to close client connection: %v", err)
 		}
 	}()
-	
+
 	_, err = clientConn.Write(packet)
 	if err != nil {
 		t.Fatalf("Failed to send packet: %v", err)
 	}
-	
+
 	// Wait for event
 	select {
 	case event := <-listener.GetEventChannel():
