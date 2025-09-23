@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/clients/metadata"
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/connectionretry"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
+	retry "github.com/strettch/strettch-cloud/sc-agent/pkg/connectionretry"
 	"go.uber.org/zap"
 )
 
@@ -55,7 +55,7 @@ func NewClient(metadataClient *metadata.Client, resourceID string, timeout time.
 		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
 		IdleConnTimeout:     defaultIdleConnTimeout,
 	}
-	
+
 	return &Client{
 		resourceID:     resourceID,
 		metadataClient: metadataClient,
@@ -75,7 +75,7 @@ func (c *Client) FetchConsoleKey(ctx context.Context, authToken string) (*Consol
 	}
 
 	url := fmt.Sprintf("%s/resource-manager/api/v1/console/public-key/agent", cloudAPI)
-	
+
 	resp, err := c.doRequest(ctx, url, authToken)
 	if err != nil {
 		return nil, err
@@ -115,8 +115,8 @@ func (c *Client) FetchConsoleKey(ctx context.Context, authToken string) (*Consol
 // FetchConsoleKeyWithRetry retrieves console key with retry logic
 func (c *Client) FetchConsoleKeyWithRetry(ctx context.Context, authToken string, maxAttempts int) (*ConsoleKey, error) {
 	cfg := retry.Default().WithMaxAttempts(maxAttempts)
-	
-	return retry.Execute(ctx, c.logger, "fetch-console-key", 
+
+	return retry.Execute(ctx, c.logger, "fetch-console-key",
 		func(ctx context.Context) (*ConsoleKey, error) {
 			return c.FetchConsoleKey(ctx, authToken)
 		}, cfg)
@@ -133,7 +133,7 @@ func (c *Client) doRequest(ctx context.Context, url, authToken string) (*http.Re
 	req.Header.Set(HeaderAccept, AcceptJSON)
 
 	c.logger.Debug("Executing request", zap.String("url", url))
-	
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -149,21 +149,21 @@ func (c *Client) getCloudAPIEndpoint(ctx context.Context) (string, error) {
 	if err == nil {
 		return info.CloudAPIURL, nil
 	}
-	
+
 	c.logger.Debug("Cache miss, fetching with retry", zap.Error(err))
-	
+
 	// Use limited retries for runtime operations
 	cfg := retry.Default().WithMaxAttempts(5)
-	
+
 	info, err = retry.Execute(ctx, c.logger, "get-cloud-api-endpoint",
 		func(ctx context.Context) (*metadata.Info, error) {
 			return c.metadataClient.GetMetadata(ctx, c.resourceID)
 		}, cfg)
-	
+
 	if err != nil {
 		return "", fmt.Errorf("failed to get metadata: %w", err)
 	}
-	
+
 	return info.CloudAPIURL, nil
 }
 

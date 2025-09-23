@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-console-agent/pkg/pipeline"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
+	"github.com/strettch/strettch-cloud/sc-agent/pkg/pipeline"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -32,10 +32,10 @@ var (
 )
 
 type Agent struct {
-	config      *config.Config
-	logger      *zap.Logger
-	processor   *pipeline.Processor
-	httpServer  *http.Server
+	config     *config.Config
+	logger     *zap.Logger
+	processor  *pipeline.Processor
+	httpServer *http.Server
 }
 
 func main() {
@@ -116,7 +116,6 @@ func (a *Agent) initialize() error {
 	if err := a.processor.Start(); err != nil {
 		return fmt.Errorf("processor start failed: %w", err)
 	}
-
 
 	a.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Console.HTTPNotifyPort),
