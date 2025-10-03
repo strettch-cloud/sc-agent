@@ -39,7 +39,7 @@ type ConsoleConfig struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		MetadataServiceEndpoint: "http://169.254.169.254/metadata/v1/auth-token",
+		MetadataServiceEndpoint: "http://172.22.10.12:8000/metadata/v1/auth-token",
 		ResourceID:              detectResourceID(),
 		ResourceIP:              detectResourceIP(),
 		Console: ConsoleConfig{
