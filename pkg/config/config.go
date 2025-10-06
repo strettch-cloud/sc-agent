@@ -2,11 +2,13 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,9 +39,50 @@ type ConsoleConfig struct {
 	SignatureTimeout int `yaml:"signature_timeout"`
 }
 
+// AgentConfig represents the structure of agent.yaml
+type AgentConfig struct {
+	MetadataService struct {
+		BaseURL string `yaml:"base_url"`
+	} `yaml:"metadata_service"`
+}
+
+const agentConfigPath = "/etc/strettchcloud/config/agent.yaml"
+
+// readMetadataBaseURL reads the agent configuration and returns the metadata service base URL.
+// It respects SC_AGENT_CONFIG environment variable for testing purposes.
+func readMetadataBaseURL() (string, error) {
+	configPath := agentConfigPath
+	if envPath := os.Getenv("SC_AGENT_CONFIG"); envPath != "" {
+		configPath = envPath
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("read config: %w", err)
+	}
+
+	var config AgentConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("parse config: %w", err)
+	}
+
+	if config.MetadataService.BaseURL == "" {
+		return "", errors.New("metadata base_url not configured")
+	}
+
+	return config.MetadataService.BaseURL, nil
+}
+
 func DefaultConfig() *Config {
+	metadataBaseURL, err := readMetadataBaseURL()
+	if err != nil {
+		// Agent cannot function without metadata service URL
+		panic(fmt.Sprintf("Failed to read metadata service configuration: %v", err))
+	}
+	metadataEndpoint := metadataBaseURL + "/metadata/v1/auth-token"
+
 	return &Config{
-		MetadataServiceEndpoint: "http://172.22.10.12:8000/metadata/v1/auth-token",
+		MetadataServiceEndpoint: metadataEndpoint,
 		ResourceID:              detectResourceID(),
 		ResourceIP:              detectResourceIP(),
 		Console: ConsoleConfig{
