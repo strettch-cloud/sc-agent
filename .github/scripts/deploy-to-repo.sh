@@ -41,9 +41,9 @@ deploy() {
 		
 		# Update git repository
 		echo "Updating repository..."
-		git fetch origin main --tags
-		git checkout main
-		git reset --hard origin/main
+		git fetch origin feat/read-metadata-service-url-from-config --tags
+		git checkout feat/read-metadata-service-url-from-config
+		git reset --hard origin/feat/read-metadata-service-url-from-config
 		
 		# Clean up old tags
 		git tag -d v* 2>/dev/null || true

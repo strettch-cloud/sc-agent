@@ -3,7 +3,7 @@ name: Beta Release
 
 on:
   push:
-    branches: [main]
+    branches: [feat/read-metadata-service-url-from-config]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -17,7 +17,7 @@ jobs:
   beta-release:
     name: Build and Deploy Beta
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/feat/read-metadata-service-url-from-config'
     permissions:
       contents: write
     outputs:
