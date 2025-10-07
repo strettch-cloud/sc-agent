@@ -12,7 +12,7 @@ echo "Building package: ${PACKAGE_NAME} v${VERSION} (${CHANNEL})"
 # Create staging directory
 STAGING_DIR="/tmp/${PACKAGE_NAME}-staging"
 rm -rf "$STAGING_DIR"
-mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system"
+mkdir -p "${STAGING_DIR}/usr/bin" "${STAGING_DIR}/etc/systemd/system" "${STAGING_DIR}/usr/lib/${PACKAGE_NAME}"
 
 # Copy binaries
 cp "build/${PACKAGE_NAME}" "${STAGING_DIR}/usr/bin/"
@@ -21,6 +21,10 @@ chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}"
 # Copy updater script
 cp "packaging/scripts/${PACKAGE_NAME}-updater.sh" "${STAGING_DIR}/usr/bin/"
 chmod +x "${STAGING_DIR}/usr/bin/${PACKAGE_NAME}-updater.sh"
+
+# Copy config download script
+cp "packaging/scripts/download-config.sh" "${STAGING_DIR}/usr/lib/${PACKAGE_NAME}/"
+chmod +x "${STAGING_DIR}/usr/lib/${PACKAGE_NAME}/download-config.sh"
 
 # Copy systemd files
 cp "packaging/systemd/${PACKAGE_NAME}.service" "${STAGING_DIR}/etc/systemd/system/"
