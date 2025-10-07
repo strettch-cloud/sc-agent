@@ -11,6 +11,7 @@ readonly LOG_PREFIX="[SC-Agent-Updater]"
 readonly LOCK_FILE="/var/run/sc-console-agent-updater.lock"
 readonly MAX_RETRIES=3
 readonly RETRY_DELAY=30
+readonly CONFIG_DOWNLOAD_SCRIPT="/usr/lib/sc-console-agent/download-config.sh"
 
 # Ensure we're running as root
 if [ "$EUID" -ne 0 ]; then 
@@ -205,6 +206,19 @@ for attempt in $(seq 1 ${MAX_RETRIES}); do
         
         if [ "${NEW_VERSION}" != "${CURRENT_VERSION}" ] && [ "${NEW_VERSION}" != "unknown" ]; then
             log "INFO" "Update successful: ${CURRENT_VERSION} -> ${NEW_VERSION}"
+
+            # Download latest agent configuration
+            log "INFO" "Downloading latest agent configuration..."
+            if [ -x "${CONFIG_DOWNLOAD_SCRIPT}" ]; then
+                if "${CONFIG_DOWNLOAD_SCRIPT}"; then
+                    log "INFO" "Agent configuration updated successfully"
+                else
+                    log "WARN" "Failed to download agent configuration, continuing with existing config"
+                fi
+            else
+                log "WARN" "Config download script not found, skipping config update"
+            fi
+
             UPDATE_SUCCESS=true
             break
         else
