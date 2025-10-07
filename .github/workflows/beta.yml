@@ -8,6 +8,12 @@ on:
       - '**.md'
       - 'docs/**'
       - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual release'
+        required: false
+        default: 'Manual release trigger'
 
 env:
   GO_VERSION: '1.25'
