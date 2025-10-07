@@ -13,6 +13,7 @@ readonly UPDATER_TIMER="sc-console-agent-update-scheduler.timer"
 # Define directories
 readonly RUNTIME_DIR="/var/run/sc-console-agent"
 readonly CONFIG_DIR="/etc/sc-console-agent"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Helper function for colored output
 print_status() {
@@ -40,6 +41,19 @@ if [ ! -f "${CONFIG_DIR}/config.yaml" ]; then
 # SC-Agent Configuration
 EOF
     chmod 644 "${CONFIG_DIR}/config.yaml"
+fi
+
+# Download latest agent configuration from repository
+print_status "info" "Downloading latest agent configuration..."
+if [ -x "${SCRIPT_DIR}/download-config.sh" ]; then
+    if ! "${SCRIPT_DIR}/download-config.sh"; then
+        print_status "error" "Failed to download agent configuration"
+        exit 1
+    fi
+    print_status "success" "Agent configuration downloaded successfully"
+else
+    print_status "error" "Config download script not found at ${SCRIPT_DIR}/download-config.sh"
+    exit 1
 fi
 
 # Reload systemd to recognize new service files
