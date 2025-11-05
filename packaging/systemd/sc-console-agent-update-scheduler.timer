@@ -1,6 +1,6 @@
 [Unit]
 Description=SC Console Agent - Auto Update Timer (every 30 minutes)
-Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+Documentation=https://docs.cloud.strettch.com/agents/sc-agent
 
 [Timer]
 # Start 30 minutes after boot
