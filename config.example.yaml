@@ -14,3 +14,4 @@ log_level: "debug"
 key_cleanup_interval: 30s
 max_retries: 3
 retry_interval: 5s
+agent_version: "1.0.0"

@@ -30,6 +30,7 @@ type Config struct {
 	KeyCleanupInterval time.Duration `yaml:"key_cleanup_interval"`
 	MaxRetries         int           `yaml:"max_retries"`
 	RetryInterval      time.Duration `yaml:"retry_interval"`
+	AgentVersion       string        `yaml:"agent_version"`
 }
 
 type ConsoleConfig struct {
@@ -96,6 +97,7 @@ func DefaultConfig() *Config {
 		KeyCleanupInterval: 120 * time.Second,
 		MaxRetries:         3,
 		RetryInterval:      5 * time.Second,
+		AgentVersion:       detectAgentVersion(),
 	}
 }
 
@@ -183,6 +185,21 @@ func detectResourceIP() string {
 	return ""
 }
 
+func detectAgentVersion() string {
+	cmd := exec.Command("dpkg-query", "-W", "-f=${Version}", "sc-console-agent")
+	output, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+
+	version := strings.TrimSpace(string(output))
+	if version == "" {
+		return "unknown"
+	}
+
+	return version
+}
+
 func (c *Config) loadFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -222,6 +239,11 @@ func (c *Config) loadFromEnv() {
 	if val := os.Getenv("SC_RESOURCE_IP"); val != "" {
         c.ResourceIP = val
     }
+	
+	// Agent version
+	if val := os.Getenv("SC_AGENT_VERSION"); val != "" {
+		c.AgentVersion = val
+	}
 	
 	// Optional overrides for debugging
 	if val := os.Getenv("SC_LOG_LEVEL"); val != "" {
