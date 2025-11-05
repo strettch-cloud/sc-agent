@@ -306,6 +306,8 @@ func (p *Processor) sendHeartbeat() {
 	if err := p.cloudAPIClient.SendHeartbeat(ctx, metadata.Token, p.version); err != nil {
 		p.logger.Error("Failed to send heartbeat", zap.Error(err))
 	} else {
-		p.logger.Debug("Heartbeat sent")
+		p.logger.Info("Heartbeat sent successfully",
+			zap.String("agent_version", p.version),
+			zap.Time("sent_at", time.Now().UTC()))
 	}
 }
