@@ -1,6 +1,7 @@
 package cloudapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,9 @@ const (
 	HeaderUser          = "user"
 	AcceptJSON          = "application/json"
 
+	// Agent type
+	AgentTypeSCAgent = "SC_AGENT"
+
 	// Default transport settings
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
@@ -38,6 +42,13 @@ type ConsoleKey struct {
 // ConsoleKeyResponse wraps the API response
 type ConsoleKeyResponse struct {
 	Data ConsoleKey `json:"data"`
+}
+
+// HeartbeatRequest represents the heartbeat payload
+type HeartbeatRequest struct {
+	AgentType string `json:"agentType"`
+	EventTime string `json:"eventTime"`
+	Version   string `json:"version"`
 }
 
 // Client handles cloud API interactions
@@ -170,4 +181,55 @@ func (c *Client) getCloudAPIEndpoint(ctx context.Context) (string, error) {
 // Close releases resources
 func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()
+}
+
+// SendHeartbeat sends agent heartbeat to the backend
+func (c *Client) SendHeartbeat(ctx context.Context, authToken, version string) error {
+	cloudAPI, err := c.getCloudAPIEndpoint(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get cloud API endpoint: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/resource-manager/api/v1/compute/agent/heartbeat", cloudAPI)
+
+	payload := HeartbeatRequest{
+		AgentType: AgentTypeSCAgent,
+		EventTime: time.Now().UTC().Format(time.RFC3339),
+		Version:   version,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set(HeaderAuthorization, "Bearer "+authToken)
+	req.Header.Set(HeaderAccept, AcceptJSON)
+	req.Header.Set("Content-Type", AcceptJSON)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			_ = err
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		c.logger.Error("Heartbeat failed",
+			zap.Int("status", resp.StatusCode),
+			zap.String("body", string(body)))
+		return fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
+	}
+
+	c.logger.Debug("Heartbeat sent successfully")
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 const (
 	// Default timeouts
 	knockProcessTimeout = 30 * time.Second
+	heartbeatInterval   = 5 * time.Minute
 )
 
 // Processor manages the console access pipeline
@@ -29,6 +30,8 @@ type Processor struct {
 	udpListener    *console.UDPListener
 
 	cleanupTicker *time.Ticker
+	heartbeatTicker *time.Ticker
+	version         string
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
@@ -59,6 +62,8 @@ func NewProcessor(cfg *config.Config, logger *zap.Logger) (*Processor, error) {
 		keyManager:     keyManager,
 		udpListener:    udpListener,
 		cleanupTicker:  time.NewTicker(cfg.KeyCleanupInterval),
+		heartbeatTicker: time.NewTicker(heartbeatInterval),
+		version:         cfg.AgentVersion,
 		ctx:            ctx,
 		cancel:         cancel,
 	}, nil
@@ -81,6 +86,9 @@ func (p *Processor) Start() error {
 	// Start background tasks
 	p.startWorkers()
 
+	// Send initial heartbeat
+	p.sendHeartbeat()
+
 	p.logger.Info("Console access processor started successfully")
 	return nil
 }
@@ -100,6 +108,11 @@ func (p *Processor) Stop() error {
 	// Stop cleanup ticker
 	if p.cleanupTicker != nil {
 		p.cleanupTicker.Stop()
+	}
+
+	// Stop heartbeat ticker
+	if p.heartbeatTicker != nil {
+		p.heartbeatTicker.Stop()
 	}
 
 	// Wait for workers to complete
@@ -147,6 +160,10 @@ func (p *Processor) startWorkers() {
 	// Key cleanup worker
 	p.wg.Add(1)
 	go p.cleanupKeys()
+
+	// Heartbeat worker
+	p.wg.Add(1)
+	go p.heartbeatWorker()
 }
 
 // processEvents handles UDP knock events
@@ -258,5 +275,37 @@ func (p *Processor) closeClients() {
 	}
 	if p.cloudAPIClient != nil {
 		p.cloudAPIClient.Close()
+	}
+}
+
+// heartbeatWorker sends periodic heartbeats
+func (p *Processor) heartbeatWorker() {
+	defer p.wg.Done()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-p.heartbeatTicker.C:
+			p.sendHeartbeat()
+		}
+	}
+}
+
+// sendHeartbeat sends a heartbeat to the resource manager
+func (p *Processor) sendHeartbeat() {
+	ctx, cancel := context.WithTimeout(p.ctx, 30*time.Second)
+	defer cancel()
+
+	metadata, err := p.metadataClient.GetMetadata(ctx, p.config.ResourceID)
+	if err != nil {
+		p.logger.Error("Failed to get metadata for heartbeat", zap.Error(err))
+		return
+	}
+
+	if err := p.cloudAPIClient.SendHeartbeat(ctx, metadata.Token, p.version); err != nil {
+		p.logger.Error("Failed to send heartbeat", zap.Error(err))
+	} else {
+		p.logger.Debug("Heartbeat sent")
 	}
 }
