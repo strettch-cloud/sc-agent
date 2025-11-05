@@ -1,6 +1,6 @@
 [Unit]
 Description=SC Console Agent - Secure VM console access management
-Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+Documentation=https://docs.cloud.strettch.com/agents/sc-agent
 After=network-online.target sshd.service
 Wants=network-online.target
 Requires=network.target

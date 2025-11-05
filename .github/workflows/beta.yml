@@ -3,7 +3,7 @@ name: Beta Release
 
 on:
   push:
-    branches: [feat/download-latest-config]
+    branches: [main]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -23,7 +23,7 @@ jobs:
   beta-release:
     name: Build and Deploy Beta
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/feat/download-latest-config'
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
     outputs:

@@ -1,6 +1,6 @@
 [Unit]
 Description=SC Console Agent - Auto Update Service
-Documentation=https://docs.cloud.strettch.com/agents/sc-console-agent
+Documentation=https://docs.cloud.strettch.com/agents/sc-agent
 After=network-online.target
 Wants=network-online.target
 
