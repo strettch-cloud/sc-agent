@@ -12,18 +12,26 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
-	// DefaultConfig will panic if agent.yaml doesn't exist
-	// In test environment, /etc/strettchcloud/config/agent.yaml typically doesn't exist
-	// So we expect a panic
+	// Temporarily unset SC_AGENT_CONFIG to ensure the test checks the default path
+	oldConfigPath := os.Getenv("SC_AGENT_CONFIG")
+	if err := os.Unsetenv("SC_AGENT_CONFIG"); err != nil {
+		t.Fatalf("Failed to unset SC_AGENT_CONFIG: %v", err)
+	}
 	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("DefaultConfig should panic when agent.yaml doesn't exist")
-		} else {
-			t.Logf("✓ DefaultConfig correctly panicked when agent.yaml not found: %v", r)
+		if oldConfigPath != "" {
+			if err := os.Setenv("SC_AGENT_CONFIG", oldConfigPath); err != nil {
+				t.Logf("Failed to restore SC_AGENT_CONFIG: %v", err)
+			}
 		}
 	}()
 
-	DefaultConfig()
+	// DefaultConfig should return an error if agent.yaml doesn't exist
+	_, err := DefaultConfig()
+	if err == nil {
+		t.Errorf("Expected an error when agent.yaml doesn't exist, but got nil")
+	} else {
+		t.Logf("✓ DefaultConfig correctly returned an error when agent.yaml not found: %v", err)
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {

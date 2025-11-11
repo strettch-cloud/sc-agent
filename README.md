@@ -4,10 +4,28 @@
 
 ## Installation
 
-Install SC-Agent using the official repository:
+Install SC-Agent using the official APT repository.
 
+### 1. Install prerequisites
 ```bash
-curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+```
+
+### 2. Add repository GPG key
+```bash
+curl -fsSL https://repo.cloud.strettch.com/console/sc-console-agent-repo.gpg | sudo gpg --dearmor -o /usr/share/keyrings/sc-console-agent-keyring.gpg
+```
+
+### 3. Add APT repository
+```bash
+echo "deb [signed-by=/usr/share/keyrings/sc-console-agent-keyring.gpg] https://repo.cloud.strettch.com/console/aptly $(. /etc/os-release && echo "$VERSION_CODENAME") main" | sudo tee /etc/apt/sources.list.d/sc-console-agent.list
+```
+
+### 4. Install the agent
+```bash
+sudo apt-get update
+sudo apt-get install -y sc-console-agent
 ```
 
 ## Service Management

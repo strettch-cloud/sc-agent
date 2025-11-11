@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -74,11 +75,10 @@ func readMetadataBaseURL() (string, error) {
 	return config.MetadataService.BaseURL, nil
 }
 
-func DefaultConfig() *Config {
+func DefaultConfig() (*Config, error) {
 	metadataBaseURL, err := readMetadataBaseURL()
 	if err != nil {
-		// Agent cannot function without metadata service URL
-		panic(fmt.Sprintf("Failed to read metadata service configuration: %v", err))
+		return nil, fmt.Errorf("failed to read metadata service configuration: %w", err)
 	}
 	metadataEndpoint := metadataBaseURL + "/metadata/v1/auth-token"
 
@@ -98,11 +98,14 @@ func DefaultConfig() *Config {
 		MaxRetries:         3,
 		RetryInterval:      5 * time.Second,
 		AgentVersion:       detectAgentVersion(),
-	}
+	}, nil
 }
 
 func Load() (*Config, error) {
-	cfg := DefaultConfig()
+	cfg, err := DefaultConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	// Load from config file if specified
 	if configPath := os.Getenv("SC_AGENT_CONFIG"); configPath != "" {
@@ -122,31 +125,27 @@ func Load() (*Config, error) {
 }
 
 func detectResourceID() string {
+	// Preferred method: DMI information
+	if id, err := os.ReadFile("/sys/class/dmi/id/product_uuid"); err == nil {
+		uuid := strings.TrimSpace(string(id))
+		if isValidUUID(uuid) {
+			return uuid
+		}
+	}
+
+	// Fallback for non-DMI systems or permission errors
+	if id, err := os.ReadFile("/etc/machine-id"); err == nil {
+		return strings.TrimSpace(string(id))
+	}
+
+	// Legacy fallback (e.g., inside containers without /sys)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	dmidecodePaths := []string{
-		"/usr/sbin/dmidecode",
-		"/sbin/dmidecode",
-		"dmidecode",
-	}
-
-	for _, dmidecodeCmd := range dmidecodePaths {
-		cmd := exec.CommandContext(ctx, dmidecodeCmd, "-s", "system-uuid")
-		output, err := cmd.Output()
-
-		if ctx.Err() == context.DeadlineExceeded {
-			continue
-		}
-
-		if err != nil {
-			continue
-		}
-
+	cmd := exec.CommandContext(ctx, "dmidecode", "-s", "system-uuid")
+	if output, err := cmd.Output(); err == nil {
 		uuid := strings.TrimSpace(string(output))
-		
-		if uuid != "" && uuid != "Not Settable" && uuid != "Not Specified" && 
-		   !strings.HasPrefix(uuid, "00000000-0000-0000") {
+		if isValidUUID(uuid) {
 			return uuid
 		}
 	}
@@ -154,30 +153,32 @@ func detectResourceID() string {
 	return ""
 }
 
+func isValidUUID(uuid string) bool {
+	return uuid != "" &&
+		!strings.EqualFold(uuid, "Not Settable") &&
+		!strings.EqualFold(uuid, "Not Specified") &&
+		!strings.HasPrefix(uuid, "00000000-0000-0000")
+}
+
 func detectResourceIP() string {
-	// Try hostname -I first
-	if cmd := exec.Command("hostname", "-I"); cmd != nil {
-		if output, err := cmd.Output(); err == nil {
-			ips := strings.Fields(strings.TrimSpace(string(output)))
-			if len(ips) > 0 {
-				return ips[0]
-			}
+	// Use net.Dial to find the preferred outbound IP
+	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+		defer conn.Close()
+		if localAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+			return localAddr.IP.String()
 		}
 	}
-	
-	// Fallback to ip route
-	if cmd := exec.Command("ip", "route", "get", "8.8.8.8"); cmd != nil {
-		if output, err := cmd.Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "src") {
-					parts := strings.Fields(line)
-					for i, part := range parts {
-						if part == "src" && i+1 < len(parts) {
-							return parts[i+1]
-						}
-					}
-				}
+
+	// Fallback for environments without internet access
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+
+	for _, address := range addrs {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
 			}
 		}
 	}
@@ -258,11 +259,11 @@ func (c *Config) validate() error {
 
 
 	if c.ResourceID == "" {
-		return fmt.Errorf("resource_id cannot be determined: dmidecode failed. Set SC_RESOURCE_ID environment variable")
+		return errors.New("resource_id cannot be determined automatically, please set SC_RESOURCE_ID")
 	}
 
 	if c.ResourceIP == "" {
-		return fmt.Errorf("resource_ip cannot be determined. Set SC_RESOURCE_IP environment variable")
+		return errors.New("resource_ip cannot be determined automatically, please set SC_RESOURCE_IP")
 	}
 
 	if c.HTTPTimeout <= 0 {
