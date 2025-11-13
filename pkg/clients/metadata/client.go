@@ -24,6 +24,9 @@ const (
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
 	defaultIdleConnTimeout     = 90 * time.Second
+
+	// Security: max response body size to log (prevent token leakage)
+	maxLogBodySize = 200
 )
 
 // Info contains metadata service response data
@@ -133,8 +136,8 @@ func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, e
 	if resp.StatusCode != http.StatusOK {
 		c.logger.Error("Metadata service error",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)))
-		return nil, fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
+			zap.String("body", sanitizeForLogging(string(body))))
+		return nil, fmt.Errorf("metadata service returned %d", resp.StatusCode)
 	}
 
 	// Parse response
@@ -220,4 +223,12 @@ func (c *Client) ClearCache() {
 // Close releases resources
 func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()
+}
+
+// sanitizeForLogging truncates sensitive data to prevent token/secret leakage in logs
+func sanitizeForLogging(data string) string {
+	if len(data) <= maxLogBodySize {
+		return data
+	}
+	return data[:maxLogBodySize] + "... (truncated for security)"
 }

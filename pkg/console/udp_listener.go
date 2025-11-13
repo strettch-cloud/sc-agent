@@ -11,12 +11,18 @@ import (
 	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
 	"github.com/strettch/strettch-cloud/sc-agent/pkg/crypto"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 const (
 	eventChannelBuffer = 10
 	udpReadTimeout     = 1 * time.Second
 	minPacketSize      = 8 + 64 // timestamp + Ed25519 signature
+
+	// Rate limiting: 100 packets/sec with burst of 200
+	// This prevents DoS attacks while allowing legitimate traffic
+	rateLimitPerSecond = 100
+	rateLimitBurst     = 200
 )
 
 type UDPKnockEvent struct {
@@ -36,6 +42,7 @@ type UDPListener struct {
 	cancel context.CancelFunc
 
 	publicKeyHex string
+	rateLimiter  *rate.Limiter
 	mu           sync.RWMutex
 }
 
@@ -51,6 +58,7 @@ func NewUDPListener(cfg *config.Config, logger *zap.Logger) (*UDPListener, error
 		ctx:          ctx,
 		cancel:       cancel,
 		publicKeyHex: "",
+		rateLimiter:  rate.NewLimiter(rateLimitPerSecond, rateLimitBurst),
 	}, nil
 }
 
@@ -127,6 +135,13 @@ func (ul *UDPListener) processPackets() {
 }
 
 func (ul *UDPListener) handlePacket(packet []byte, sourceIP string) {
+	// Rate limiting check to prevent DoS attacks
+	if !ul.rateLimiter.Allow() {
+		ul.logger.Warn("Rate limit exceeded, dropping packet",
+			zap.String("source_ip", sourceIP))
+		return
+	}
+
 	if len(packet) < minPacketSize {
 		ul.logger.Debug("Packet too small",
 			zap.String("source_ip", sourceIP),

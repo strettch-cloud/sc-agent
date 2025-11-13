@@ -28,6 +28,9 @@ const (
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
 	defaultIdleConnTimeout     = 90 * time.Second
+
+	// Security: max response body size to log (prevent token leakage)
+	maxLogBodySize = 200
 )
 
 // ConsoleKey represents the console access key data
@@ -106,8 +109,8 @@ func (c *Client) FetchConsoleKey(ctx context.Context, authToken string) (*Consol
 	if resp.StatusCode != http.StatusOK {
 		c.logger.Error("API error",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)))
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+			zap.String("body", sanitizeForLogging(string(body))))
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
 	var response ConsoleKeyResponse
@@ -183,6 +186,14 @@ func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()
 }
 
+// sanitizeForLogging truncates sensitive data to prevent token/secret leakage in logs
+func sanitizeForLogging(data string) string {
+	if len(data) <= maxLogBodySize {
+		return data
+	}
+	return data[:maxLogBodySize] + "... (truncated for security)"
+}
+
 // SendHeartbeat sends agent heartbeat to the backend
 func (c *Client) SendHeartbeat(ctx context.Context, authToken, version string) error {
 	cloudAPI, err := c.getCloudAPIEndpoint(ctx)
@@ -226,7 +237,7 @@ func (c *Client) SendHeartbeat(ctx context.Context, authToken, version string) e
 		body, _ := io.ReadAll(resp.Body)
 		c.logger.Error("Heartbeat failed",
 			zap.Int("status", resp.StatusCode),
-			zap.String("body", string(body)))
+			zap.String("body", sanitizeForLogging(string(body))))
 		return fmt.Errorf("heartbeat returned status %d", resp.StatusCode)
 	}
 

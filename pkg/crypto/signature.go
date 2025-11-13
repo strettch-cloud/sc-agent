@@ -36,6 +36,10 @@ func NewSignatureVerifier(publicKeyHex string) (*SignatureVerifier, error) {
 
 // VerifyKnockPacket verifies a packet containing timestamp
 func (v *SignatureVerifier) VerifyKnockPacket(packet []byte, resourceID string, maxTimeSkew time.Duration) error {
+	// Validate packet size to prevent buffer overflow
+	if len(packet) != ExpectedPacketSize {
+		return fmt.Errorf("invalid packet size: expected %d, got %d", ExpectedPacketSize, len(packet))
+	}
 
 	timestamp := int64(binary.BigEndian.Uint64(packet[:TimestampSize]))
 	signature := packet[TimestampSize:]
