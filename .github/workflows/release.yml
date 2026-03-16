@@ -147,7 +147,9 @@ jobs:
           "stable" \
           "$DEPLOY_KEY" \
           "$REPO_HOST" \
-          "$REPO_USER"
+          "$REPO_USER" \
+          "${{ github.ref }}" \
+          "${{ github.sha }}"
     
     - name: Create and push tag
       run: |
