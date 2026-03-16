@@ -7,6 +7,8 @@ CHANNEL="${2:?Channel required}"
 DEPLOY_KEY="${3:?Deploy key required}"
 REPO_HOST="${4:?Repository host required}"
 REPO_USER="${5:?Repository user required}"
+GIT_REF="${6:-refs/heads/main}"
+GIT_SHA="${7:-}"
 
 # Setup SSH securely
 setup_ssh() {
@@ -39,11 +41,19 @@ deploy() {
 		
 		cd /root/sc-console-agent || exit 1
 		
-		# Update git repository
-		echo "Updating repository..."
-		git fetch origin main --tags
-		git checkout main
-		git reset --hard origin/main
+		# Update git repository to the exact workflow revision
+		echo "Updating repository to ${GIT_REF}${GIT_SHA:+ @ ${GIT_SHA}}..."
+		git fetch origin --tags
+		if [ -n "${GIT_SHA}" ]; then
+		    git fetch origin "${GIT_SHA}"
+		    git checkout --detach "${GIT_SHA}"
+		elif [ -n "${GIT_REF}" ]; then
+		    git fetch origin "${GIT_REF}"
+		    git checkout -B deploy-target FETCH_HEAD
+		else
+		    git checkout main
+		    git reset --hard origin/main
+		fi
 		
 		# Clean up old tags
 		git tag -d v* 2>/dev/null || true
