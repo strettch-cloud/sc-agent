@@ -498,6 +498,30 @@ esac
 
 echo "--- Installing ${PACKAGE_NAME} for ${DISTRIBUTION} ---"
 
+APT_LOCK_TIMEOUT="${SC_APT_LOCK_TIMEOUT:-300}"
+APT_MAX_RETRIES="${SC_APT_MAX_RETRIES:-5}"
+APT_RETRY_DELAY="${SC_APT_RETRY_DELAY:-15}"
+
+apt_get_with_retry() {
+    local apt_args="$1"
+    local attempt=1
+
+    while [ "$attempt" -le "$APT_MAX_RETRIES" ]; do
+        if eval "apt-get -o DPkg::Lock::Timeout=$APT_LOCK_TIMEOUT $apt_args"; then
+            return 0
+        fi
+
+        if [ "$attempt" -lt "$APT_MAX_RETRIES" ]; then
+            echo "   -> APT command failed (attempt ${attempt}/${APT_MAX_RETRIES}), retrying in ${APT_RETRY_DELAY}s"
+            sleep "$APT_RETRY_DELAY"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    return 1
+}
+
 # Clean up old configurations
 echo "-> Cleaning up old repository configurations..."
 rm -f /etc/apt/sources.list.d/sc-agent.list \
@@ -506,8 +530,8 @@ rm -f /etc/apt/sources.list.d/sc-agent.list \
       /usr/share/keyrings/${PACKAGE_NAME}-keyring.gpg 2>/dev/null || true
 
 # Install prerequisites
-log_and_run "Updating package lists" "apt-get update > /dev/null" "update package lists"
-log_and_run "Installing prerequisites" "apt-get install -y apt-transport-https ca-certificates curl gnupg > /dev/null" "install prerequisites"
+log_and_run "Updating package lists" "apt_get_with_retry 'update > /dev/null'" "update package lists"
+log_and_run "Installing prerequisites" "apt_get_with_retry 'install -y apt-transport-https ca-certificates curl gnupg > /dev/null'" "install prerequisites"
 
 # Add repository key and source
 KEYRING_FILE="/usr/share/keyrings/${PACKAGE_NAME}-keyring.gpg"
@@ -517,8 +541,8 @@ SOURCES_FILE="/etc/apt/sources.list.d/${PACKAGE_NAME}.list"
 log_and_run "Adding repository" "echo \"deb [signed-by=${KEYRING_FILE}] https://${REPO_HOST}/${REPO_PATH}/aptly ${DISTRIBUTION} main\" | tee \"${SOURCES_FILE}\" >/dev/null" "add repository"
 
 # Update and install
-log_and_run "Updating package index" "apt-get update -o Dir::Etc::SourceList='${SOURCES_FILE}' -o Dir::Etc::SourceParts='-' -o APT::Get::List-Cleanup='0' > /dev/null" "update package index"
-log_and_run "Installing ${PACKAGE_NAME}" "apt-get install -y \"${PACKAGE_NAME}\"" "install ${PACKAGE_NAME}"
+log_and_run "Updating package index" "apt_get_with_retry \"update -o Dir::Etc::SourceList='${SOURCES_FILE}' -o Dir::Etc::SourceParts='-' -o APT::Get::List-Cleanup='0' > /dev/null\"" "update package index"
+log_and_run "Installing ${PACKAGE_NAME}" "apt_get_with_retry 'install -y \"${PACKAGE_NAME}\"'" "install ${PACKAGE_NAME}"
 
 echo "✅ ${PACKAGE_NAME} installed successfully!"
 exit 0
