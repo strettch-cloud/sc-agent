@@ -8,6 +8,9 @@ set -euo pipefail
 # Repository configuration 
 PACKAGE_REPO_URL="${SC_REPO_URL:-https://repo.cloud.strettch.com/console}"
 PACKAGE_NAME="sc-console-agent"
+APT_LOCK_TIMEOUT="${SC_APT_LOCK_TIMEOUT:-300}"
+APT_MAX_RETRIES="${SC_APT_MAX_RETRIES:-5}"
+APT_RETRY_DELAY="${SC_APT_RETRY_DELAY:-15}"
 
 # Add trap for cleanup on failure
 cleanup() {
@@ -40,6 +43,26 @@ if [ -f /etc/os-release ]; then
 fi
 
 echo "Installing SC-Agent on Debian/Ubuntu system..."
+
+# Run apt-get commands with lock timeout and retry to avoid transient dpkg contention
+apt_get_with_retry() {
+    local attempt=1
+
+    while [ "${attempt}" -le "${APT_MAX_RETRIES}" ]; do
+        if apt-get -o DPkg::Lock::Timeout="${APT_LOCK_TIMEOUT}" "$@"; then
+            return 0
+        fi
+
+        if [ "${attempt}" -lt "${APT_MAX_RETRIES}" ]; then
+            echo "APT command failed (attempt ${attempt}/${APT_MAX_RETRIES}), retrying in ${APT_RETRY_DELAY}s..."
+            sleep "${APT_RETRY_DELAY}"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    return 1
+}
 
 # Check for required tools
 for tool in curl gpg apt-get systemctl; do
@@ -86,7 +109,7 @@ EOF
 
 # Update package index to include our new repository
 echo "Updating package index..."
-if ! apt-get update; then
+if ! apt_get_with_retry update; then
     echo "Error: Failed to update package index"
     echo "This might be a temporary network issue. Please try again later."
     exit 1
@@ -94,8 +117,7 @@ fi
 
 # Install the agent package with lock wait
 echo "Installing ${PACKAGE_NAME} package..."
-if ! apt-get install -y \
-    -o DPkg::Lock::Timeout=300 \
+if ! apt_get_with_retry install -y \
     -o Dpkg::Options::="--force-confdef" \
     -o Dpkg::Options::="--force-confold" \
     ${PACKAGE_NAME}; then
