@@ -1,25 +1,25 @@
 [Unit]
-Description=SC Console Agent - Auto Update Timer (every 30 minutes)
+Description=SC Console Agent - Auto Update Timer (every 1 minute)
 Documentation=https://docs.cloud.strettch.com/agents/sc-agent
 
 [Timer]
-# Start 30 minutes after boot
-OnBootSec=30min
+# Start 1 minute after boot
+OnBootSec=1min
 
-# Run 30 minutes after the timer is activated
-OnActiveSec=30min
+# Run 1 minute after the timer is activated
+OnActiveSec=1min
 
-# Run every 30 minutes after the last run
-OnUnitActiveSec=30min
+# Run every 1 minute after the last run
+OnUnitActiveSec=1min
 
 # Add a small randomized delay to prevent all agents from checking at the same time
-RandomizedDelaySec=5min
+RandomizedDelaySec=10s
 
 # Persist last trigger time across reboots
 Persistent=true
 
 # Timer accuracy
-AccuracySec=1min
+AccuracySec=10s
 
 # Service to trigger
 Unit=sc-console-agent-update-scheduler.service
