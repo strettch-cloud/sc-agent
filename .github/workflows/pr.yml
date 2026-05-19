@@ -24,7 +24,7 @@ jobs:
           cache: true
 
       - name: Run Trivy Vulnerability Scanner (SCA)
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -36,16 +36,16 @@ jobs:
           skip-files: '.env'
 
       - name: Run Govulncheck
-        uses: golang/govulncheck-action@v1.0.4
+        uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1.0.4
 
       # 📊 Tests
       - name: Run Tests
         run: make test
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.4.0
+          version: v2.12.2
           working-directory: .
 
       - name: Build for Linux AMD64
