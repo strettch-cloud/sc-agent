@@ -77,14 +77,24 @@ sudo apt-get purge sc-console-agent
 
 ## Development
 
+Tools and tasks are defined in `mise.toml`. Install [mise](https://mise.jdx.dev), then run
+`mise install` once; `mise tasks` lists everything available.
+
 ### Build from source
 ```bash
-make build
-make build-all  # Multi-platform builds
+mise run build
+GOOS=linux GOARCH=arm64 mise run build  # Another platform
 ```
 
 ### Run locally
 ```bash
-make run
-make run-debug  # With debug logging
+mise run run
+mise run run-debug  # With debug logging
+```
+
+### Test and lint
+```bash
+mise run test
+mise run lint
+mise run security-scan  # Trivy + govulncheck
 ```
