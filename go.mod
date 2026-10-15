@@ -2,7 +2,7 @@ module github.com/strettch/strettch-cloud/sc-agent
 
 go 1.25
 
-toolchain go1.25.10
+toolchain go1.26.9
 
 require (
 	go.uber.org/zap v1.27.0
