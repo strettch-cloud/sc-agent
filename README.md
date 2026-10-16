@@ -13,7 +13,7 @@ the internet or storing long-lived keys on the machine.
  ────────────────────────────                      ───────────────
  user opens a console session
         │
-        │ 1. signed "knock" (UDP 9999)  ───────────►  sc-console-agent
+        │ 1. signed "knock" (UDP 60124) ───────────►  sc-console-agent
         │    resource ID + timestamp, ed25519          verifies the signature with the
         │                                              platform key from the metadata service
         │
@@ -28,8 +28,9 @@ the internet or storing long-lived keys on the machine.
 ```
 
 - **Knock verification:** a knock is accepted only if it carries a valid ed25519 signature over
-  this machine's resource ID and a recent timestamp (`signature_timeout`, 30 s by default), so
-  replayed or forged packets are dropped.
+  this machine's resource ID and a timestamp no older than `signature_timeout` (30 s by default).
+  Forged packets and captures older than that are rejected; a knock replayed within the window
+  only makes the agent ask the platform for the session key again.
 - **Credentials:** the agent holds no secrets on disk. It gets a short-lived token, the
   platform's public key and the API address from the link-local metadata service.
 - **Short-lived access:** console keys are removed from `authorized_keys` every
@@ -42,7 +43,7 @@ the internet or storing long-lived keys on the machine.
 On an Ubuntu VM, as root:
 
 ```bash
-curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo sh
+curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash
 ```
 
 This adds the signed APT repository, installs the package and starts two systemd units:
@@ -78,11 +79,11 @@ To override a setting, add it to `/etc/sc-console-agent/environment` and restart
 | Variable | Default | Meaning |
 |---|---|---|
 | `SC_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `SC_AGENT_CONFIG` | — | Path to a YAML file with settings from [`config.example.yaml`](config.example.yaml) |
-| `SC_RESOURCE_ID` | from metadata | This machine's resource ID |
+| `SC_AGENT_CONFIG` | — | Path to a YAML file used *instead of* `/etc/strettchcloud/config/agent.yaml`. It must contain `metadata_service.base_url` (copy it from that file) and may add any setting from [`config.example.yaml`](config.example.yaml). |
+| `SC_RESOURCE_ID` | from `dmidecode -s system-uuid` | This machine's resource ID; set it if the UUID lookup fails |
 
-The agent listens on UDP `9999` (knock) and TCP `60500`; both can be changed in the YAML file
-(`console.udp_knock_port`, `console.http_notify_port`).
+By default the agent listens on UDP `60124` (knock) and TCP `60125`. Both can be changed in the
+`SC_AGENT_CONFIG` file (`console.udp_knock_port`, `console.http_notify_port`).
 
 ## Verifying packages
 
