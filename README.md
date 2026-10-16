@@ -1,100 +1,119 @@
-# SC-Agent
+# SC Console Agent
 
-[Strettch Cloud Console Agent] Securely bridging your VMs with the cloud control plane for real-time console access.
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
+The SC Console Agent (`sc-console-agent`) runs on [Strettch Cloud](https://cloud.strettch.com)
+virtual machines and gives their owners browser-based console access without opening SSH to
+the internet or storing long-lived keys on the machine.
+
+## How it works
+
+```
+ Strettch Cloud control plane                      Virtual machine
+ ────────────────────────────                      ───────────────
+ user opens a console session
+        │
+        │ 1. signed "knock" (UDP 60124) ───────────►  sc-console-agent
+        │    resource ID + timestamp, ed25519          verifies the signature with the
+        │                                              platform key from the metadata service
+        │
+        │ 2. agent asks for the session key  ◄──────  authenticated with a short-lived token
+        │                                              from the metadata service
+        │
+        │ 3. short-lived SSH key  ──────────────────►  added to root's authorized_keys,
+        │                                              tagged as console-managed
+        ▼
+ console session over SSH                          console keys are removed every 2 minutes;
+                                                   your own keys are never touched
+```
+
+- **Knock verification:** a knock is accepted only if it carries a valid ed25519 signature over
+  this machine's resource ID and a timestamp no older than `signature_timeout` (30 s by default).
+  Forged packets and captures older than that are rejected; a knock replayed within the window
+  only makes the agent ask the platform for the session key again.
+- **Credentials:** the agent holds no secrets on disk. It gets a short-lived token, the
+  platform's public key and the API address from the link-local metadata service.
+- **Short-lived access:** console keys are removed from `authorized_keys` every
+  `key_cleanup_interval` (2 minutes by default), so a console key can only be used to start a
+  session for a short time; sessions already open are not interrupted.
+- **Heartbeat:** the agent reports its version to the platform every 5 minutes.
 
 ## Installation
 
-Install SC-Agent using the official repository:
+On an Ubuntu VM, as root:
 
 ```bash
 curl -sSL https://repo.cloud.strettch.com/console/install.sh | sudo bash
 ```
 
-## Service Management
+This adds the signed APT repository, installs the package and starts two systemd units:
 
-### Check service status
+| Unit | Purpose |
+|---|---|
+| `sc-console-agent.service` | The agent |
+| `sc-console-agent-update-scheduler.timer` | Checks for a new version every 30 minutes and installs it |
+
+To try pre-release builds, use `https://repo.cloud.strettch.com/console/beta/install.sh` instead.
+
+Supported: Ubuntu 18.04, 20.04, 22.04 and 24.04 on `amd64` and `arm64`.
+
+## Operating the agent
+
 ```bash
-sudo systemctl status sc-console-agent
+sudo systemctl status sc-console-agent                       # status
+sudo journalctl -u sc-console-agent -f                       # logs
+sudo systemctl start sc-console-agent-update-scheduler.service  # check for an update now
+sudo journalctl -u sc-console-agent-update-scheduler.service    # update logs
+sc-console-agent -v                                          # installed version
 ```
 
-### Start/stop service
-```bash
-sudo systemctl start sc-console-agent
-sudo systemctl stop sc-console-agent
-sudo systemctl restart sc-console-agent
-```
-
-### Enable/disable service (start on boot)
-```bash
-sudo systemctl enable sc-console-agent   # Enable auto-start on boot
-sudo systemctl disable sc-console-agent  # Disable auto-start
-```
-
-### View logs
-```bash
-sudo journalctl -u sc-console-agent -f          # Follow live logs
-sudo journalctl -u sc-console-agent --since=1h  # Last hour logs
-```
-
-## Auto-Update
-
-### Check auto-update timer status
-```bash
-sudo systemctl status sc-console-agent-update-scheduler.timer
-```
-
-### Manual update
-```bash
-sudo systemctl start sc-console-agent-updater
-```
-
-### Auto-update logs
-```bash
-sudo journalctl -u sc-console-agent-updater -f
-sudo journalctl -u sc-console-agent-update-scheduler.timer
-```
+Remove it with `sudo apt-get purge sc-console-agent`.
 
 ## Configuration
 
-Configuration file: `/etc/sc-console-agent/config.yaml`
+The agent works without configuration. The installer writes the metadata service address to
+`/etc/strettchcloud/config/agent.yaml`; everything else has a default.
 
-```bash
-sudo nano /etc/sc-console-agent/config.yaml
-sudo systemctl restart sc-console-agent  # Restart to apply changes
-```
+To override a setting, add it to `/etc/sc-console-agent/environment` and restart the service:
 
-## Removal
+| Variable | Default | Meaning |
+|---|---|---|
+| `SC_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `SC_AGENT_CONFIG` | — | Path to a YAML file used *instead of* `/etc/strettchcloud/config/agent.yaml`. It must contain `metadata_service.base_url` (copy it from that file) and may add any setting from [`config.example.yaml`](config.example.yaml). |
+| `SC_RESOURCE_ID` | from `dmidecode -s system-uuid` | This machine's resource ID; set it if the UUID lookup fails |
 
-### Remove package (keep configuration)
-```bash
-sudo apt-get remove sc-console-agent
-```
+By default the agent listens on UDP `60124` (knock) and TCP `60125`. Both can be changed in the
+`SC_AGENT_CONFIG` file (`console.udp_knock_port`, `console.http_notify_port`).
 
-### Complete removal (remove package and all configurations)
-```bash
-sudo apt-get purge sc-console-agent
-```
+## Verifying packages
+
+- **APT packages** are signed. The trusted signing keys and their fingerprints are in
+  [`packaging/keys/`](packaging/keys/).
+- **Release `.deb` files** carry a build-provenance attestation:
+
+  ```bash
+  gh attestation verify sc-console-agent_<version>_amd64.deb --repo strettch-cloud/sc-agent
+  ```
 
 ## Development
 
-Tools and tasks are defined in `mise.toml`. Install [mise](https://mise.jdx.dev), then run
-`mise install` once; `mise tasks` lists everything available.
+The toolchain is pinned in `mise.toml`. Install [mise](https://mise.jdx.dev), then:
 
-### Build from source
 ```bash
-mise run build
-GOOS=linux GOARCH=arm64 mise run build  # Another platform
-```
-
-### Run locally
-```bash
-mise run run
-mise run run-debug  # With debug logging
-```
-
-### Test and lint
-```bash
+mise install           # once
+mise run build         # GOOS=linux GOARCH=arm64 mise run build to cross-compile
 mise run test
 mise run lint
-mise run security-scan  # Trivy + govulncheck
+mise run security-scan # Trivy + govulncheck
 ```
+
+How CI builds and publishes releases is described in [.github/README.md](.github/README.md).
+
+## Contributing and security
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report
+vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
+## License
+
+[Apache License 2.0](LICENSE).

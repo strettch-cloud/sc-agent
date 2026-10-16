@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/cloudapi"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/console"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/ssh"
+	"github.com/strettch-cloud/sc-agent/pkg/clients/cloudapi"
+	"github.com/strettch-cloud/sc-agent/pkg/clients/metadata"
+	"github.com/strettch-cloud/sc-agent/pkg/config"
+	"github.com/strettch-cloud/sc-agent/pkg/console"
+	"github.com/strettch-cloud/sc-agent/pkg/ssh"
 	"go.uber.org/zap"
 )
 

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
+	"github.com/strettch-cloud/sc-agent/pkg/config"
 	"go.uber.org/zap"
 )
 

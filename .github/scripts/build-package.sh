@@ -35,6 +35,10 @@ cp "packaging/systemd/${PACKAGE_NAME}-update-scheduler.timer" "${STAGING_DIR}/et
 # upgrade refreshes which repository signing keys the host trusts.
 ./.github/scripts/build-keyring.sh "${STAGING_DIR}/usr/lib/${PACKAGE_NAME}/apt-keyring.gpg"
 
+# License terms travel with the binary.
+install -D -m 644 LICENSE "${STAGING_DIR}/usr/share/doc/${PACKAGE_NAME}/LICENSE"
+install -D -m 644 NOTICE "${STAGING_DIR}/usr/share/doc/${PACKAGE_NAME}/NOTICE"
+
 # Build .deb package
 DESCRIPTION="SC Console Agent - Secure access management"
 [ "$CHANNEL" = "beta" ] && DESCRIPTION="$DESCRIPTION (Beta)"
@@ -46,7 +50,7 @@ fpm -s dir -t deb \
     -C "$STAGING_DIR/" \
     --description "$DESCRIPTION" \
     --maintainer "engineering@strettch.com" \
-    --url "https://github.com/strettch/sc-console-agent" \
+    --url "https://github.com/strettch-cloud/sc-agent" \
     --depends "libc6" \
     --depends "dmidecode" \
     --depends "jq" \

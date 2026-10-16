@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/pipeline"
+	"github.com/strettch-cloud/sc-agent/pkg/config"
+	"github.com/strettch-cloud/sc-agent/pkg/pipeline"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

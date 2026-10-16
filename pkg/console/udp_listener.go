@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/config"
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/crypto"
+	"github.com/strettch-cloud/sc-agent/pkg/config"
+	"github.com/strettch-cloud/sc-agent/pkg/crypto"
 	"go.uber.org/zap"
 )
 
