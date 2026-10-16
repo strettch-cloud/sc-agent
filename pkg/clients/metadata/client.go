@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	retry "github.com/strettch/strettch-cloud/sc-agent/pkg/connectionretry"
+	retry "github.com/strettch-cloud/sc-agent/pkg/connectionretry"
 	"go.uber.org/zap"
 )
 

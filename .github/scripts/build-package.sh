@@ -46,7 +46,7 @@ fpm -s dir -t deb \
     -C "$STAGING_DIR/" \
     --description "$DESCRIPTION" \
     --maintainer "engineering@strettch.com" \
-    --url "https://github.com/strettch/sc-console-agent" \
+    --url "https://github.com/strettch-cloud/sc-agent" \
     --depends "libc6" \
     --depends "dmidecode" \
     --depends "jq" \

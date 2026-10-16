@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/strettch/strettch-cloud/sc-agent/pkg/clients/metadata"
-	retry "github.com/strettch/strettch-cloud/sc-agent/pkg/connectionretry"
+	"github.com/strettch-cloud/sc-agent/pkg/clients/metadata"
+	retry "github.com/strettch-cloud/sc-agent/pkg/connectionretry"
 	"go.uber.org/zap"
 )
 
