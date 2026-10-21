@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -478,5 +479,77 @@ func TestAtomicWrite(t *testing.T) {
 		if strings.Contains(file.Name(), ".tmp") {
 			t.Error("Temporary file not cleaned up")
 		}
+	}
+}
+
+func newTestKeyManager(t *testing.T) *KeyManager {
+	t.Helper()
+	sshDir := t.TempDir()
+	return &KeyManager{
+		logger:             zap.NewNop(),
+		sshDirPath:         sshDir,
+		authorizedKeysPath: filepath.Join(sshDir, "authorized_keys"),
+	}
+}
+
+var testConsoleKey = &ConsoleKeyData{
+	PublicKey:   "ssh-ed25519 CONSOLE_KEY_DATA",
+	Principal:   "root",
+	RequesterID: "admin@example.com",
+	CreatedAt:   "2026-10-21T10:00:00Z",
+	ExpireAt:    "2026-10-21T11:00:00Z",
+}
+
+// A line longer than bufio.Scanner's 64 KiB limit, such as a key with a long
+// command= option, used to make the read fail, and Install then rewrote the
+// file with only the console key.
+func TestInstallKeepsCustomerKeysWhenALineIsOver64KiB(t *testing.T) {
+	keyManager := newTestKeyManager(t)
+	longLine := `command="` + strings.Repeat("a", 70*1024) + `" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI long@host`
+	customerKeys := []string{
+		"ssh-rsa AAAAB3NzaC1yc2EAAAAD first@host",
+		longLine,
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI second@host",
+	}
+	if err := os.WriteFile(keyManager.authorizedKeysPath, []byte(strings.Join(customerKeys, "\n")+"\n"), 0600); err != nil {
+		t.Fatalf("Failed to create authorized_keys: %v", err)
+	}
+
+	if err := keyManager.Install(testConsoleKey); err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+
+	content, err := os.ReadFile(keyManager.authorizedKeysPath)
+	if err != nil {
+		t.Fatalf("Failed to read authorized_keys after install: %v", err)
+	}
+	lines := strings.Split(string(content), "\n")
+	for _, key := range customerKeys {
+		if !slices.Contains(lines, key) {
+			t.Errorf("customer key %.40q... was removed", key)
+		}
+	}
+	if !strings.Contains(string(content), testConsoleKey.PublicKey) {
+		t.Error("console key was not installed")
+	}
+}
+
+// Writing after a failed read would leave only the console key, so Install must
+// leave a file it cannot read alone. A symlink to itself cannot be read ("too
+// many levels of symbolic links"); it stands in for any read error, such as a
+// disk I/O error.
+func TestInstallLeavesAnUnreadableAuthorizedKeysFileAlone(t *testing.T) {
+	keyManager := newTestKeyManager(t)
+	if err := os.Symlink("authorized_keys", keyManager.authorizedKeysPath); err != nil {
+		t.Fatalf("Failed to create the self-referencing symlink: %v", err)
+	}
+
+	if err := keyManager.Install(testConsoleKey); err == nil {
+		t.Error("Install succeeded on an unreadable authorized_keys, want an error")
+	}
+
+	target, err := os.Readlink(keyManager.authorizedKeysPath)
+	if err != nil || target != "authorized_keys" {
+		t.Errorf("authorized_keys was replaced: Readlink = %q, %v", target, err)
 	}
 }

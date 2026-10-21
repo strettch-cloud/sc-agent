@@ -1,7 +1,6 @@
 package ssh
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -59,10 +58,11 @@ func (km *KeyManager) Install(keyData *ConsoleKeyData) error {
 		return fmt.Errorf("failed to create SSH directory: %w", err)
 	}
 
+	// Writing after a failed read would replace the customer's keys with only
+	// the console key, so a file that exists but can't be read is left alone.
 	existingKeys, err := km.readKeys()
 	if err != nil && !os.IsNotExist(err) {
-		km.logger.Warn("Failed to read authorized_keys", zap.Error(err))
-		existingKeys = []string{}
+		return fmt.Errorf("failed to read authorized_keys: %w", err)
 	}
 
 	updatedKeys := km.updateWithConsoleKey(existingKeys, keyData)
@@ -140,28 +140,20 @@ func (km *KeyManager) formatKeyWithMetadata(keyData *ConsoleKeyData) string {
 	return fmt.Sprintf("%s %s%s", keyData.PublicKey, string(metadataJSON), ConsoleKeySuffix)
 }
 
+// readKeys splits the file itself rather than using bufio.Scanner, which fails
+// on any line over 64 KiB; a key with long options can be that long.
 func (km *KeyManager) readKeys() ([]string, error) {
-	file, err := os.Open(km.authorizedKeysPath)
+	content, err := os.ReadFile(km.authorizedKeysPath)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			// Log error but don't fail the function
-			_ = err
-		}
-	}()
 
 	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	for line := range strings.Lines(string(content)) {
+		// Dropping a trailing "\r" keeps Windows line endings working, as they
+		// did with bufio.Scanner.
+		lines = append(lines, strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"))
 	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to scan file: %w", err)
-	}
-
 	return lines, nil
 }
 
