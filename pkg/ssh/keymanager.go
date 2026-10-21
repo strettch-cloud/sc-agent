@@ -150,8 +150,8 @@ func (km *KeyManager) readKeys() ([]string, error) {
 
 	var lines []string
 	for line := range strings.Lines(string(content)) {
-		// Dropping a trailing "\r" keeps Windows line endings working, as they
-		// did with bufio.Scanner.
+		// bufio.Scanner dropped one trailing "\r", so files with Windows line
+		// endings were rewritten with Unix ones; this keeps doing that.
 		lines = append(lines, strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"))
 	}
 	return lines, nil

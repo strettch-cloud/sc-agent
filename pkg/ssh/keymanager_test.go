@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -501,8 +502,8 @@ var testConsoleKey = &ConsoleKeyData{
 }
 
 // A line longer than bufio.Scanner's 64 KiB limit, such as a key with a long
-// command= option, used to make the read fail, and Install then rewrote the
-// file with only the console key.
+// command= option, must not make the read fail: Install would then refuse to
+// install the console key.
 func TestInstallKeepsCustomerKeysWhenALineIsOver64KiB(t *testing.T) {
 	keyManager := newTestKeyManager(t)
 	longLine := `command="` + strings.Repeat("a", 70*1024) + `" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI long@host`
@@ -536,8 +537,8 @@ func TestInstallKeepsCustomerKeysWhenALineIsOver64KiB(t *testing.T) {
 
 // Writing after a failed read would leave only the console key, so Install must
 // leave a file it cannot read alone. A symlink to itself cannot be read ("too
-// many levels of symbolic links"); it stands in for any read error, such as a
-// disk I/O error.
+// many levels of symbolic links") even by root, unlike a chmod 000 file, so it
+// stands in for any read error, such as a disk I/O error.
 func TestInstallLeavesAnUnreadableAuthorizedKeysFileAlone(t *testing.T) {
 	keyManager := newTestKeyManager(t)
 	if err := os.Symlink("authorized_keys", keyManager.authorizedKeysPath); err != nil {
@@ -551,5 +552,42 @@ func TestInstallLeavesAnUnreadableAuthorizedKeysFileAlone(t *testing.T) {
 	target, err := os.Readlink(keyManager.authorizedKeysPath)
 	if err != nil || target != "authorized_keys" {
 		t.Errorf("authorized_keys was replaced: Readlink = %q, %v", target, err)
+	}
+}
+
+// readKeys must split lines exactly as the bufio.Scanner it replaced, or Install
+// and RemoveConsoleKeys would rewrite customers' files differently.
+func TestReadKeysSplitsLinesLikeBufioScanner(t *testing.T) {
+	contents := []string{
+		"",
+		"\n",
+		"key",
+		"key\n",
+		"first\nsecond",
+		"first\n\nsecond\n\n",
+		"first\r\nsecond\r\n",
+		"first\r\r\nsecond",
+		"\r\n",
+		" spaced \n\ttabbed\t\n",
+	}
+	for _, content := range contents {
+		keyManager := newTestKeyManager(t)
+		if err := os.WriteFile(keyManager.authorizedKeysPath, []byte(content), 0600); err != nil {
+			t.Fatalf("Failed to create authorized_keys: %v", err)
+		}
+
+		got, err := keyManager.readKeys()
+		if err != nil {
+			t.Fatalf("readKeys(%q) failed: %v", content, err)
+		}
+
+		var want []string
+		scanner := bufio.NewScanner(strings.NewReader(content))
+		for scanner.Scan() {
+			want = append(want, scanner.Text())
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("readKeys(%q) = %q, bufio.Scanner gives %q", content, got, want)
+		}
 	}
 }
