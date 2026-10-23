@@ -118,12 +118,7 @@ func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, e
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			// Log error but don't fail the function
-			_ = err
-		}
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

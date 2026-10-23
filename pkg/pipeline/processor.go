@@ -44,11 +44,7 @@ func NewProcessor(cfg *config.Config, logger *zap.Logger) (*Processor, error) {
 		return nil, fmt.Errorf("failed to create key manager: %w", err)
 	}
 
-	udpListener, err := console.NewUDPListener(cfg, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create UDP listener: %w", err)
-	}
-
+	udpListener := console.NewUDPListener(cfg, logger)
 	metadataClient := metadata.NewClient(cfg.MetadataServiceEndpoint, cfg.HTTPTimeout, logger)
 	cloudAPIClient := cloudapi.NewClient(metadataClient, cfg.ResourceID, cfg.HTTPTimeout, logger)
 
@@ -94,16 +90,14 @@ func (p *Processor) Start() error {
 }
 
 // Stop gracefully shuts down the processor
-func (p *Processor) Stop() error {
+func (p *Processor) Stop() {
 	p.logger.Info("Stopping console access processor")
 
 	// Signal shutdown
 	p.cancel()
 
 	// Stop UDP listener
-	if err := p.udpListener.Stop(); err != nil {
-		p.logger.Error("Error stopping UDP listener", zap.Error(err))
-	}
+	p.udpListener.Stop()
 
 	// Stop cleanup ticker
 	if p.cleanupTicker != nil {
@@ -122,7 +116,6 @@ func (p *Processor) Stop() error {
 	p.closeClients()
 
 	p.logger.Info("Console access processor stopped")
-	return nil
 }
 
 // initialize fetches initial metadata and configures the UDP listener

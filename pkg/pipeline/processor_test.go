@@ -84,10 +84,7 @@ func TestProcessorStartStop(t *testing.T) {
 	}
 
 	// Test that Stop doesn't panic when called before Start
-	err = processor.Stop()
-	if err != nil {
-		t.Errorf("Stop should not error when called before Start: %v", err)
-	}
+	processor.Stop()
 }
 
 func TestProcessorConfiguration(t *testing.T) {

@@ -72,11 +72,6 @@ func Execute[T any](ctx context.Context, logger *zap.Logger, name string, op Ope
 			return zero, err
 		}
 		
-		// Check max attempts
-		if cfg.MaxAttempts > 0 && attempt > cfg.MaxAttempts {
-			return zero, ErrMaxRetriesExceeded
-		}
-		
 		// Execute operation
 		result, err := op(ctx)
 		if err == nil {

@@ -141,10 +141,7 @@ func (a *Agent) shutdown() error {
 		shutdownErr = err
 	}
 
-	if err := a.processor.Stop(); err != nil {
-		a.logger.Error("Processor shutdown failed", zap.Error(err))
-		shutdownErr = err
-	}
+	a.processor.Stop()
 
 	return shutdownErr
 }
