@@ -84,7 +84,9 @@ func (ul *UDPListener) Stop() error {
 		}
 	}
 
-	close(ul.eventChan)
+	// The event channel stays open: the packet goroutine may still be handing
+	// on a knock it read before Stop, and sending on a closed channel panics.
+	// The processor stops reading it when its own context ends.
 	return nil
 }
 

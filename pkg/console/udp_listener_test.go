@@ -452,3 +452,32 @@ func TestUDPListenerIntegration(t *testing.T) {
 		t.Fatal("Expected event but none received within timeout")
 	}
 }
+
+// A knock read just before Stop is handled just after it. Stop used to close
+// the event channel, so handing that knock on panicked, and the agent exited
+// with code 2 instead of stopping cleanly.
+func TestAKnockHandledAfterStopDoesNotPanic(t *testing.T) {
+	cfg := &config.Config{
+		ResourceID: "test-resource",
+		Console:    config.ConsoleConfig{MaxPacketSize: 1024, SignatureTimeout: 30},
+	}
+	listener, err := NewUDPListener(cfg, zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.UpdatePublicKey(hex.EncodeToString(publicKey)); err != nil {
+		t.Fatal(err)
+	}
+	timestamp := time.Now().Unix()
+	knock := binary.BigEndian.AppendUint64(nil, uint64(timestamp))
+	knock = append(knock, ed25519.Sign(privateKey, []byte(fmt.Sprintf("%s|%d", cfg.ResourceID, timestamp)))...)
+	if err := listener.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	listener.handlePacket(knock, "192.0.2.1")
+}

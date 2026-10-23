@@ -176,11 +176,7 @@ func (p *Processor) processEvents() {
 		select {
 		case <-p.ctx.Done():
 			return
-		case event, ok := <-eventChan:
-			if !ok {
-				p.logger.Debug("Event channel closed")
-				return
-			}
+		case event := <-eventChan:
 			p.handleKnock(event)
 		}
 	}
