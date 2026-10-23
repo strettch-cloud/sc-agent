@@ -1,12 +1,19 @@
 # SC Agent Configuration
-# Point SC_AGENT_CONFIG at a copy of this file. It replaces
-# /etc/strettchcloud/config/agent.yaml, so it must keep metadata_service.base_url.
-metadata_service:
-  base_url: "http://<metadata-service-host>:8000"
+# Copy the settings you need to /etc/sc-console-agent/config.yaml, then restart
+# the service. SC_AGENT_CONFIG can point at another file instead. The values
+# below are the defaults.
 
-metadata_service_endpoint: "http://169.254.169.254/metadata/v1/auth-token"
-resource_id: "a4c6bb6c-21ca-4289-b4ca-998a808ffece"
-resource_ip: "127.0.0.1"
+# The metadata service address comes from /etc/strettchcloud/config/agent.yaml.
+# Set it here only to replace that address, for example in a test.
+# metadata_service:
+#   base_url: "http://<metadata-service-host>:8000"
+# Full metadata service endpoint. Replaces the one built from base_url.
+# metadata_service_endpoint: "http://<metadata-service-host>:8000/metadata/v1/auth-token"
+
+# Detected on each VM: set them only to replace what the agent detected.
+# resource_id: "<this VM's UUID, from dmidecode -s system-uuid>"
+# resource_ip: "<this VM's IP address>"
+# agent_version: "<the installed package version>"
 
 console:
   udp_knock_port: 60124
@@ -15,8 +22,7 @@ console:
   signature_timeout: 30
 
 http_timeout: 30s
-log_level: "debug"
-key_cleanup_interval: 30s
+log_level: "info"
+key_cleanup_interval: 120s
 max_retries: 3
 retry_interval: 5s
-agent_version: "1.0.0"

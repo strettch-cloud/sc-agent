@@ -74,16 +74,18 @@ Remove it with `sudo apt-get purge sc-console-agent`.
 The agent works without configuration. The installer writes the metadata service address to
 `/etc/strettchcloud/config/agent.yaml`; everything else has a default.
 
-To override a setting, add it to `/etc/sc-console-agent/environment` and restart the service:
+To override a setting, add it to `/etc/sc-console-agent/config.yaml` (the settings are in
+[`config.example.yaml`](config.example.yaml)) or as a variable to `/etc/sc-console-agent/environment`,
+then restart the service. A variable wins over the file.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `SC_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `SC_AGENT_CONFIG` | — | Path to a YAML file used *instead of* `/etc/strettchcloud/config/agent.yaml`. It must contain `metadata_service.base_url` (copy it from that file) and may add any setting from [`config.example.yaml`](config.example.yaml). |
+| `SC_AGENT_CONFIG` | `/etc/sc-console-agent/config.yaml` | Path to the settings file. Unlike the default one, a file named here must exist. If it sets `metadata_service.base_url`, that address replaces the one in `/etc/strettchcloud/config/agent.yaml`. |
 | `SC_RESOURCE_ID` | from `dmidecode -s system-uuid` | This machine's resource ID; set it if the UUID lookup fails |
 
-By default the agent listens on UDP `60124` (knock) and TCP `60125`. Both can be changed in the
-`SC_AGENT_CONFIG` file (`console.udp_knock_port`, `console.http_notify_port`).
+By default the agent listens on UDP `60124` (knock) and TCP `60125`. Both can be changed in
+`config.yaml` (`console.udp_knock_port`, `console.http_notify_port`).
 
 ## Verifying packages
 

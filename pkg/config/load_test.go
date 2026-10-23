@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const agentYAMLWithAddress = "metadata_service:\n  base_url: http://metadata.test.invalid\n"
@@ -126,5 +128,31 @@ func TestLoadRejectsASettingsFileThatIsNotYAML(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), settingsPath) {
 		t.Errorf("Load error = %v, want one naming %s", err, settingsPath)
+	}
+}
+
+// config.example.yaml is what people copy into config.yaml, so all of it must
+// load, and none of it may change which VM the agent says it is, its version,
+// or where it gets its token.
+func TestLoadAcceptsTheWholeExampleConfig(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	useConfigFiles(t, agentYAMLWithAddress, string(example))
+
+	cfg := mustLoad(t)
+
+	if want := "http://metadata.test.invalid/metadata/v1/auth-token"; cfg.MetadataServiceEndpoint != want {
+		t.Errorf("metadata endpoint = %q, want %q from agent.yaml", cfg.MetadataServiceEndpoint, want)
+	}
+	var exampleSettings Config
+	if err := yaml.Unmarshal(example, &exampleSettings); err != nil {
+		t.Fatal(err)
+	}
+	if exampleSettings.ResourceID != "" || exampleSettings.ResourceIP != "" ||
+		exampleSettings.AgentVersion != "" || exampleSettings.MetadataServiceEndpoint != "" {
+		t.Errorf("the example sets values that belong to one VM: resource_id %q, resource_ip %q, agent_version %q, metadata_service_endpoint %q",
+			exampleSettings.ResourceID, exampleSettings.ResourceIP, exampleSettings.AgentVersion, exampleSettings.MetadataServiceEndpoint)
 	}
 }
