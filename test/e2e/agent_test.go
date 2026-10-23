@@ -542,8 +542,11 @@ func TestTheConsoleKeyIsRemovedAndTheCustomersKeysStay(t *testing.T) {
 	agent.waitUntilReady(t, cloud)
 
 	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
-	eventually(t, func() bool { _, keyRequests, _ := cloud.snapshot(); return len(keyRequests) > 0 },
-		"the knock never fetched a key")
+	// The fake records the key request before the agent installs the key, so
+	// wait for the key itself: otherwise the next check can pass on the file
+	// as it was before the install.
+	eventually(t, func() bool { return strings.Contains(agent.authorizedKeys(t), consoleKey) },
+		"the knock never installed the console key")
 
 	eventually(t, func() bool { return agent.authorizedKeys(t) == customerKey },
 		"authorized_keys should be back to only the customer's key, but holds:\n"+agent.authorizedKeys(t))
