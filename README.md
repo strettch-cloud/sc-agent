@@ -71,21 +71,21 @@ Remove it with `sudo apt-get purge sc-console-agent`.
 
 ## Configuration
 
-The agent works without configuration. The installer writes the metadata service address to
-`/etc/strettchcloud/config/agent.yaml`; everything else has a default.
+The agent's settings are fixed: its ports, timeouts, retries and how long a console key stays
+are the same on every VM, so a mistaken edit can't break the console or make many agents
+overload the platform. The installer writes the metadata service address to
+`/etc/strettchcloud/config/agent.yaml`, and the resource ID comes from
+`dmidecode -s system-uuid`. The agent listens on UDP `60124` (knock) and TCP `60125`.
 
-To override a setting, add it to `/etc/sc-console-agent/config.yaml` (the settings are in
-[`config.example.yaml`](config.example.yaml)) or as a variable to `/etc/sc-console-agent/environment`,
-then restart the service. A variable wins over the file.
+The log level is the only setting you can change. Set `log_level` in
+`/etc/sc-console-agent/config.yaml` (see [`config.example.yaml`](config.example.yaml)), or
+`SC_LOG_LEVEL` in `/etc/sc-console-agent/environment`, then restart the service. The variable wins
+over the file.
 
-| Variable | Default | Meaning |
+| Setting | Values | Notes |
 |---|---|---|
-| `SC_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `SC_AGENT_CONFIG` | `/etc/sc-console-agent/config.yaml` | Path to the settings file. Unlike the default one, a file named here must exist. If it sets `metadata_service.base_url`, that address replaces the one in `/etc/strettchcloud/config/agent.yaml`. |
-| `SC_RESOURCE_ID` | from `dmidecode -s system-uuid` | This machine's resource ID; set it if the UUID lookup fails |
-
-By default the agent listens on UDP `60124` (knock) and TCP `60125`. Both can be changed in
-`config.yaml` (`console.udp_knock_port`, `console.http_notify_port`).
+| `log_level` in config.yaml, or `SC_LOG_LEVEL` | `debug`, `info` (default), `warn`, `error` | A config.yaml that sets anything else, or a level the agent doesn't know, is ignored as a whole: the agent logs why and runs on its defaults. `sc-console-agent -validate-config` reports the problem. |
+| `SC_RESOURCE_ID` | this machine's resource ID | Used only when `dmidecode` finds no ID. Where it finds one, `SC_RESOURCE_ID` is ignored. |
 
 ## Verifying packages
 
@@ -110,7 +110,9 @@ mise run lint
 mise run security-scan # Trivy + govulncheck
 ```
 
-How CI builds and publishes releases is described in [.github/README.md](.github/README.md).
+The end-to-end tests build the agent with the `e2e` tag, which adds `SC_TEST_*` variables for fake
+servers, free ports and short intervals (`pkg/config/overrides_e2e.go`); release builds don't have
+them. How CI builds and publishes releases is described in [.github/README.md](.github/README.md).
 
 ## Contributing and security
 
