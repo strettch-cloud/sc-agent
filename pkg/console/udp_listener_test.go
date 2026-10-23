@@ -26,10 +26,7 @@ func TestNewUDPListener(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	listener, err := NewUDPListener(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	listener := NewUDPListener(cfg, logger)
 
 	if listener == nil {
 		t.Fatal("Expected non-nil listener")
@@ -64,14 +61,10 @@ func TestUDPListenerStartStop(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	listener, err := NewUDPListener(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	listener := NewUDPListener(cfg, logger)
 
 	// Start listener
-	err = listener.Start()
-	if err != nil {
+	if err := listener.Start(); err != nil {
 		t.Fatalf("Failed to start UDP listener: %v", err)
 	}
 
@@ -80,11 +73,7 @@ func TestUDPListenerStartStop(t *testing.T) {
 		t.Error("Connection should be established after start")
 	}
 
-	// Stop listener
-	err = listener.Stop()
-	if err != nil {
-		t.Errorf("Failed to stop UDP listener: %v", err)
-	}
+	listener.Stop()
 }
 
 func TestUpdatePublicKey(t *testing.T) {
@@ -99,10 +88,7 @@ func TestUpdatePublicKey(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	listener, err := NewUDPListener(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	listener := NewUDPListener(cfg, logger)
 
 	// Generate test key
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
@@ -185,10 +171,7 @@ func TestGetEventChannel(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	listener, err := NewUDPListener(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	listener := NewUDPListener(cfg, logger)
 
 	eventChan := listener.GetEventChannel()
 	if eventChan == nil {
@@ -213,10 +196,7 @@ func TestHandlePacket(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	listener, err := NewUDPListener(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	listener := NewUDPListener(cfg, logger)
 
 	// Generate test key pair
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -378,10 +358,7 @@ func TestUDPListenerIntegration(t *testing.T) {
 
 	logger := zap.NewNop()
 
-	listener, err := NewUDPListener(cfg, logger)
-	if err != nil {
-		t.Fatalf("Failed to create UDP listener: %v", err)
-	}
+	listener := NewUDPListener(cfg, logger)
 
 	// Generate test key pair
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -401,11 +378,7 @@ func TestUDPListenerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start listener: %v", err)
 	}
-	defer func() {
-		if err := listener.Stop(); err != nil {
-			t.Logf("Failed to stop listener: %v", err)
-		}
-	}()
+	defer listener.Stop()
 
 	// Get the actual port that was assigned
 	addr := listener.conn.LocalAddr().(*net.UDPAddr)
@@ -450,5 +423,57 @@ func TestUDPListenerIntegration(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Expected event but none received within timeout")
+	}
+}
+
+// A knock read just before Stop is handled just after it. Stop used to close
+// the event channel, so handing that knock on panicked, and the agent exited
+// with code 2 instead of stopping cleanly.
+func TestAKnockHandledAfterStopDoesNotPanic(t *testing.T) {
+	cfg := &config.Config{
+		ResourceID: "test-resource",
+		Console:    config.ConsoleConfig{MaxPacketSize: 1024, SignatureTimeout: 30},
+	}
+	listener := NewUDPListener(cfg, zap.NewNop())
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.UpdatePublicKey(hex.EncodeToString(publicKey)); err != nil {
+		t.Fatal(err)
+	}
+	timestamp := time.Now().Unix()
+	knock := binary.BigEndian.AppendUint64(nil, uint64(timestamp))
+	knock = append(knock, ed25519.Sign(privateKey, []byte(fmt.Sprintf("%s|%d", cfg.ResourceID, timestamp)))...)
+	listener.Stop()
+
+	listener.handlePacket(knock, "192.0.2.1")
+}
+
+// Knocks beyond the queue are dropped, so the listener never blocks behind a
+// slow key install.
+func TestKnocksBeyondTheQueueAreDropped(t *testing.T) {
+	cfg := &config.Config{
+		ResourceID: "test-resource",
+		Console:    config.ConsoleConfig{MaxPacketSize: 1024, SignatureTimeout: 30},
+	}
+	listener := NewUDPListener(cfg, zap.NewNop())
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.UpdatePublicKey(hex.EncodeToString(publicKey)); err != nil {
+		t.Fatal(err)
+	}
+	timestamp := time.Now().Unix()
+	knock := binary.BigEndian.AppendUint64(nil, uint64(timestamp))
+	knock = append(knock, ed25519.Sign(privateKey, []byte(fmt.Sprintf("%s|%d", cfg.ResourceID, timestamp)))...)
+
+	for range eventChannelBuffer + 1 {
+		listener.handlePacket(knock, "192.0.2.1")
+	}
+
+	if queued := len(listener.GetEventChannel()); queued != eventChannelBuffer {
+		t.Errorf("%d knocks queued, want the queue's %d", queued, eventChannelBuffer)
 	}
 }

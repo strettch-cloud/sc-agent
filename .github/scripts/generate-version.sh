@@ -23,12 +23,12 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
 
     if [[ -n "$LAST_BETA" ]]; then
         # Extract base version and beta number from last beta
-        BETA_BASE=$(echo "$LAST_BETA" | sed 's/-beta\.[0-9]*$//')
-        BETA_NUM=$(echo "$LAST_BETA" | sed 's/.*-beta\.//')
+        BETA_BASE=${LAST_BETA%-beta.*}
+        BETA_NUM=${LAST_BETA##*-beta.}
 
         # Parse versions for comparison
-        BETA_PARTS=($(echo "${BETA_BASE}" | tr '.' ' '))
-        STABLE_PARTS=($(echo "${LAST_STABLE}" | tr '.' ' '))
+        IFS='.' read -r -a BETA_PARTS <<< "${BETA_BASE}"
+        IFS='.' read -r -a STABLE_PARTS <<< "${LAST_STABLE}"
         BETA_MAJOR=${BETA_PARTS[0]:-0}
         BETA_MINOR=${BETA_PARTS[1]:-0}
         BETA_PATCH=${BETA_PARTS[2]:-0}
@@ -53,7 +53,7 @@ if [[ "$RELEASE_TYPE" == "beta" ]]; then
         fi
     else
         # No beta versions exist, create first one based on stable
-        STABLE_PARTS=($(echo "${LAST_STABLE}" | tr '.' ' '))
+        IFS='.' read -r -a STABLE_PARTS <<< "${LAST_STABLE}"
         MAJOR=${STABLE_PARTS[0]:-0}
         MINOR=${STABLE_PARTS[1]:-0}
         PATCH=${STABLE_PARTS[2]:-0}

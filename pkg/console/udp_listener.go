@@ -39,8 +39,7 @@ type UDPListener struct {
 	mu           sync.RWMutex
 }
 
-func NewUDPListener(cfg *config.Config, logger *zap.Logger) (*UDPListener, error) {
-
+func NewUDPListener(cfg *config.Config, logger *zap.Logger) *UDPListener {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &UDPListener{
@@ -51,15 +50,11 @@ func NewUDPListener(cfg *config.Config, logger *zap.Logger) (*UDPListener, error
 		ctx:          ctx,
 		cancel:       cancel,
 		publicKeyHex: "",
-	}, nil
+	}
 }
 
 func (ul *UDPListener) Start() error {
-	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", ul.config.Console.UDPKnockPort))
-	if err != nil {
-		return fmt.Errorf("failed to resolve UDP address: %w", err)
-	}
-
+	addr := &net.UDPAddr{Port: ul.config.Console.UDPKnockPort}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on UDP port %d: %w", ul.config.Console.UDPKnockPort, err)
@@ -74,18 +69,18 @@ func (ul *UDPListener) Start() error {
 	return nil
 }
 
-func (ul *UDPListener) Stop() error {
+func (ul *UDPListener) Stop() {
 	ul.logger.Info("Stopping UDP knock listener")
 	ul.cancel()
 
 	if ul.conn != nil {
-		if err := ul.conn.Close(); err != nil {
-			return fmt.Errorf("failed to close UDP connection: %w", err)
-		}
+		// Closing fails only for a socket that's already closed.
+		_ = ul.conn.Close()
 	}
 
-	close(ul.eventChan)
-	return nil
+	// The event channel stays open: the packet goroutine may still be handing
+	// on a knock it read before Stop, and sending on a closed channel panics.
+	// The processor stops reading it when its own context ends.
 }
 
 func (ul *UDPListener) GetEventChannel() <-chan UDPKnockEvent {

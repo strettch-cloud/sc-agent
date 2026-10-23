@@ -118,12 +118,7 @@ func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, e
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			// Log error but don't fail the function
-			_ = err
-		}
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -200,21 +195,6 @@ func (c *Client) getCached() *Info {
 	}
 
 	return nil
-}
-
-// SetCacheDuration updates the cache duration
-func (c *Client) SetCacheDuration(duration time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cacheDuration = duration
-}
-
-// ClearCache invalidates the cache
-func (c *Client) ClearCache() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cache = nil
-	c.cacheTime = time.Time{}
 }
 
 // Close releases resources
