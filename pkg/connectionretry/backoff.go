@@ -44,19 +44,6 @@ func (c *Config) WithMaxAttempts(max int) *Config {
 	return c
 }
 
-// WithDelays sets both initial and max delay
-func (c *Config) WithDelays(initial, max time.Duration) *Config {
-	c.InitialDelay = initial
-	c.MaxDelay = max
-	return c
-}
-
-// WithJitter sets the jitter factor (0-1 range recommended)
-func (c *Config) WithJitter(jitter float64) *Config {
-	c.Jitter = jitter
-	return c
-}
-
 // Execute runs the operation with exponential backoff retry logic
 func Execute[T any](ctx context.Context, logger *zap.Logger, name string, op Operation[T], cfg *Config) (T, error) {
 	if cfg == nil {
@@ -70,11 +57,6 @@ func Execute[T any](ctx context.Context, logger *zap.Logger, name string, op Ope
 		// Check context cancellation
 		if err := ctx.Err(); err != nil {
 			return zero, err
-		}
-		
-		// Check max attempts
-		if cfg.MaxAttempts > 0 && attempt > cfg.MaxAttempts {
-			return zero, ErrMaxRetriesExceeded
 		}
 		
 		// Execute operation
@@ -146,9 +128,4 @@ func nextDelay(current, max time.Duration, jitterFactor float64) time.Duration {
 	}
 	
 	return next
-}
-
-// Simple is a convenience function for basic retry with defaults
-func Simple[T any](ctx context.Context, logger *zap.Logger, name string, op Operation[T]) (T, error) {
-	return Execute(ctx, logger, name, op, Default())
 }

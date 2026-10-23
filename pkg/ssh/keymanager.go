@@ -166,34 +166,23 @@ func (km *KeyManager) writeKeys(keys []string) error {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	// Write all keys with single trailing newline
+	// On each failure below, cleanup errors are ignored: the error worth
+	// reporting is the one that stopped the write.
 	content := strings.Join(keys, "\n")
 	if _, err := fmt.Fprintf(tmpFile, "%s\n", strings.TrimSpace(content)); err != nil {
-		if closeErr := tmpFile.Close(); closeErr != nil {
-			// Log close error but continue with removal
-			_ = closeErr // Suppress staticcheck SA9003
-		}
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
-			// Log remove error but continue with returning original error
-			_ = removeErr // Suppress staticcheck SA9003
-		}
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to write keys: %w", err)
 	}
 
 	if err := tmpFile.Close(); err != nil {
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
-			// Log remove error but continue with returning original error
-			_ = removeErr // Suppress staticcheck SA9003
-		}
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomic replace
 	if err := os.Rename(tmpPath, km.authorizedKeysPath); err != nil {
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
-			// Log remove error but continue with returning original error
-			_ = removeErr // Suppress staticcheck SA9003
-		}
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to replace authorized_keys: %w", err)
 	}
 
