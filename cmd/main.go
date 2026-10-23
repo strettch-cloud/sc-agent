@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -70,8 +69,9 @@ func runAgent() error {
 		fmt.Fprintf(os.Stderr, "Warning: Running as non-root user may limit SSH key management capabilities\n")
 	}
 
+	// The logger writes each line straight to stdout, so it never needs a
+	// Sync, and Sync on a socket, as stdout is under systemd, only fails.
 	logger := initLogger("info")
-	defer syncLogger(logger)
 
 	agent := &Agent{logger: logger}
 	if err := agent.initialize(); err != nil {
@@ -177,10 +177,4 @@ func initLogger(logLevel string) *zap.Logger {
 	)
 
 	return zap.New(core, zap.AddCaller())
-}
-
-func syncLogger(logger *zap.Logger) {
-	if err := logger.Sync(); err != nil && !strings.Contains(err.Error(), "inappropriate ioctl") {
-		fmt.Fprintf(os.Stderr, "Failed to sync logger: %v\n", err)
-	}
 }

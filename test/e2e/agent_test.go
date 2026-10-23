@@ -578,6 +578,11 @@ func TestAgentStopsCleanlyOnSIGTERM(t *testing.T) {
 	if got := agent.exitCode(t); got != "0" {
 		t.Errorf("exit code after SIGTERM = %s, want 0", got)
 	}
+	// Docker gives the agent a pipe for its output, as systemd gives it a
+	// socket; a clean stop must not report an error on either.
+	if logs := agent.logs(t); strings.Contains(logs, "Failed to sync logger") {
+		t.Errorf("a clean stop reported a logger error:\n%s", logs)
+	}
 }
 
 func TestAgentRefusesToStartWithoutAResourceID(t *testing.T) {
