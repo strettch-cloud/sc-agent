@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -83,6 +84,17 @@ func runTests(m *testing.M) int {
 	defer func() { _ = os.RemoveAll(directory) }()
 	agentBinaryDirectory = directory
 	agentCoverageDirectory = os.Getenv("AGENT_COVERAGE_DIR")
+	// One test runs the agent as a user other than root, which must still
+	// run the binary and write its coverage.
+	for _, shared := range []string{agentBinaryDirectory, agentCoverageDirectory} {
+		if shared == "" {
+			continue
+		}
+		if err := os.Chmod(shared, 0o777); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
 
 	// The e2e tag adds the SC_TEST_* settings startAgent uses.
 	arguments := []string{"build", "-tags", "e2e", "-ldflags", "-X main.version=" + agentVersion,
@@ -129,6 +141,16 @@ type fakeCloud struct {
 	token      string
 	knockKey   ed25519.PrivateKey
 	keyExpires time.Duration
+	// knockKeyHex is the knock key the metadata service hands out. Empty
+	// leaves it out of the response.
+	knockKeyHex string
+
+	// Failures a test stages. metadataFailures and keyFailures answer that
+	// many requests with 503 before working again; heartbeatStatus, when set,
+	// answers every heartbeat with it.
+	metadataFailures int
+	keyFailures      int
+	heartbeatStatus  int
 
 	mutex            sync.Mutex
 	metadataRequests []recordedRequest
@@ -142,7 +164,8 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cloud := &fakeCloud{token: "token-" + t.Name(), knockKey: knockKey, keyExpires: time.Hour}
+	cloud := &fakeCloud{token: "token-" + t.Name(), knockKey: knockKey, keyExpires: time.Hour,
+		knockKeyHex: hex.EncodeToString(knockKey.Public().(ed25519.PublicKey))}
 	cloud.server = httptest.NewServer(http.HandlerFunc(cloud.serve))
 	t.Cleanup(cloud.server.Close)
 	return cloud
@@ -162,13 +185,23 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	switch {
 	case request.Method == http.MethodGet && request.URL.Path == "/metadata/v1/auth-token":
 		cloud.metadataRequests = append(cloud.metadataRequests, recorded)
-		writeJSON(response, map[string]string{
-			"token":       cloud.token,
-			"publicKey":   hex.EncodeToString(cloud.knockKey.Public().(ed25519.PublicKey)),
-			"cloudAPIUrl": cloud.server.URL,
-		})
+		if cloud.metadataFailures > 0 {
+			cloud.metadataFailures--
+			http.Error(response, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		metadata := map[string]string{"token": cloud.token, "cloudAPIUrl": cloud.server.URL}
+		if cloud.knockKeyHex != "" {
+			metadata["publicKey"] = cloud.knockKeyHex
+		}
+		writeJSON(response, metadata)
 	case request.Method == http.MethodGet && request.URL.Path == "/resource-manager/api/v1/console/public-key/agent":
 		cloud.keyRequests = append(cloud.keyRequests, recorded)
+		if cloud.keyFailures > 0 {
+			cloud.keyFailures--
+			http.Error(response, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		now := time.Now().UTC()
 		writeJSON(response, map[string]any{"data": map[string]string{
 			"publicKey":   consoleKey,
@@ -179,6 +212,10 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 		}})
 	case request.Method == http.MethodPost && request.URL.Path == "/resource-manager/api/v1/compute/agent/heartbeat":
 		cloud.heartbeats = append(cloud.heartbeats, recorded)
+		if cloud.heartbeatStatus != 0 {
+			http.Error(response, "rejected", cloud.heartbeatStatus)
+			return
+		}
 		writeJSON(response, map[string]string{})
 	default:
 		http.NotFound(response, request)
@@ -211,9 +248,14 @@ type agentOptions struct {
 	// firmware has no ID.
 	withoutResourceID bool
 	cleanupInterval   time.Duration
+	heartbeatInterval time.Duration
 	// configYAML is the package's config.yaml. Empty leaves it out, as on most
 	// VMs.
 	configYAML string
+	// udpPort is the knock port. Zero picks a free one.
+	udpPort int
+	// user runs the agent as this user instead of root.
+	user string
 }
 
 type agentContainer struct {
@@ -221,22 +263,14 @@ type agentContainer struct {
 	udpPort int
 }
 
-func freePort(t *testing.T, network string) int {
+func freeUDPPort(t *testing.T) int {
 	t.Helper()
-	if network == "udp" {
-		listener, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = listener.Close() }()
-		return listener.LocalAddr().(*net.UDPAddr).Port
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = listener.Close() }()
-	return listener.Addr().(*net.TCPAddr).Port
+	return listener.LocalAddr().(*net.UDPAddr).Port
 }
 
 // startAgent runs the agent in a fresh container with only the settings a
@@ -246,7 +280,13 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 	if options.cleanupInterval == 0 {
 		options.cleanupInterval = time.Hour
 	}
-	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: freePort(t, "udp")}
+	if options.heartbeatInterval == 0 {
+		options.heartbeatInterval = time.Hour
+	}
+	if options.udpPort == 0 {
+		options.udpPort = freeUDPPort(t)
+	}
+	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: options.udpPort}
 	files := map[string]string{agentYAMLPath: agentYAML(cloud), configYAMLPath: options.configYAML}
 	if !options.withoutResourceID {
 		files[dmidecodePath] = fakeDMIDecode
@@ -258,14 +298,17 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		// Free ports, so tests can run side by side on the host's network, and
 		// short waits.
 		"--env", fmt.Sprintf("SC_TEST_UDP_KNOCK_PORT=%d", agent.udpPort),
-		"--env", fmt.Sprintf("SC_TEST_HTTP_NOTIFY_PORT=%d", freePort(t, "tcp")),
 		"--env", "SC_TEST_KEY_CLEANUP_INTERVAL="+options.cleanupInterval.String(),
+		"--env", "SC_TEST_HEARTBEAT_INTERVAL="+options.heartbeatInterval.String(),
 		"--env", "SC_TEST_HTTP_TIMEOUT=2s",
 		"--env", "SC_TEST_MAX_RETRIES=1",
 		"--env", "SC_TEST_RETRY_INTERVAL=100ms",
 		// What dpkg-query gives the agent on a VM.
 		"--env", "SC_TEST_AGENT_VERSION="+agentVersion,
 	)
+	if options.user != "" {
+		arguments = append(arguments, "--user", options.user)
+	}
 	arguments = append(arguments, image, "/agent/sc-console-agent")
 	if output, err := exec.Command("docker", arguments...).CombinedOutput(); err != nil {
 		t.Fatalf("docker run: %v\n%s", err, output)
@@ -504,6 +547,56 @@ func TestTheConsoleKeyIsRemovedAndTheCustomersKeysStay(t *testing.T) {
 
 	eventually(t, func() bool { return agent.authorizedKeys(t) == customerKey },
 		"authorized_keys should be back to only the customer's key, but holds:\n"+agent.authorizedKeys(t))
+
+	// Later cleanups find no console key, and must leave the file alone.
+	before := agent.exec(t, "stat", "--format=%i %y", authorizedKeysPath)
+	time.Sleep(2500 * time.Millisecond)
+	if after := agent.exec(t, "stat", "--format=%i %y", authorizedKeysPath); after != before {
+		t.Errorf("a cleanup with no console key to remove rewrote authorized_keys: inode and time %q, then %q", before, after)
+	}
+}
+
+// The console reaches the agent only with UDP knocks. Nothing has connected
+// to it over TCP since the knocks replaced an HTTP call in 2025.
+func TestTheAgentListensOnNoTCPPort(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{})
+	agent.waitUntilReady(t, cloud)
+
+	if ports := agent.listeningTCPPorts(t); len(ports) > 0 {
+		t.Errorf("the agent listens on TCP ports %v, want none", ports)
+	}
+}
+
+// listeningTCPPorts returns the TCP ports the agent, process 1 in its
+// container, listens on. The image has no ss or netstat, so it matches the
+// agent's socket inodes against the kernel's TCP tables; the container shares
+// the host's network, so those tables list the host's sockets too.
+func (agent *agentContainer) listeningTCPPorts(t *testing.T) []int64 {
+	t.Helper()
+	agentSockets := map[string]bool{}
+	for _, target := range strings.Fields(agent.exec(t, "sh", "-c", "readlink /proc/1/fd/*")) {
+		if inode, isSocket := strings.CutPrefix(target, "socket:["); isSocket {
+			agentSockets[strings.TrimSuffix(inode, "]")] = true
+		}
+	}
+	var ports []int64
+	// tcp6 exists only where the host has IPv6.
+	for _, row := range strings.Split(agent.exec(t, "sh", "-c", "cat /proc/net/tcp*"), "\n") {
+		// Columns: sl local_address rem_address st ... inode; st 0A is LISTEN.
+		fields := strings.Fields(row)
+		if len(fields) < 10 || fields[3] != "0A" || !agentSockets[fields[9]] {
+			continue
+		}
+		localAddress := fields[1]
+		port, err := strconv.ParseInt(localAddress[strings.LastIndex(localAddress, ":")+1:], 16, 32)
+		if err != nil {
+			t.Fatalf("local address %q: %v", localAddress, err)
+		}
+		ports = append(ports, port)
+	}
+	return ports
 }
 
 func TestAgentStopsCleanlyOnSIGTERM(t *testing.T) {
@@ -519,6 +612,11 @@ func TestAgentStopsCleanlyOnSIGTERM(t *testing.T) {
 
 	if got := agent.exitCode(t); got != "0" {
 		t.Errorf("exit code after SIGTERM = %s, want 0", got)
+	}
+	// Docker gives the agent a pipe for its output, as systemd gives it a
+	// socket; a clean stop must not report an error on either.
+	if logs := agent.logs(t); strings.Contains(logs, "Failed to sync logger") {
+		t.Errorf("a clean stop reported a logger error:\n%s", logs)
 	}
 }
 

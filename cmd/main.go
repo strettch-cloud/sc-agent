@@ -1,28 +1,16 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/strettch-cloud/sc-agent/pkg/config"
 	"github.com/strettch-cloud/sc-agent/pkg/pipeline"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-)
-
-const (
-	defaultReadHeaderTimeout = 10 * time.Second
-	defaultReadTimeout       = 30 * time.Second
-	defaultWriteTimeout      = 30 * time.Second
-	defaultIdleTimeout       = 60 * time.Second
-	defaultShutdownTimeout   = 30 * time.Second
 )
 
 var (
@@ -32,10 +20,9 @@ var (
 )
 
 type Agent struct {
-	config     *config.Config
-	logger     *zap.Logger
-	processor  *pipeline.Processor
-	httpServer *http.Server
+	config    *config.Config
+	logger    *zap.Logger
+	processor *pipeline.Processor
 }
 
 func main() {
@@ -70,14 +57,16 @@ func runAgent() error {
 		fmt.Fprintf(os.Stderr, "Warning: Running as non-root user may limit SSH key management capabilities\n")
 	}
 
+	// The logger writes each line straight to stdout, so it never needs a
+	// Sync, and Sync on a socket, as stdout is under systemd, only fails.
 	logger := initLogger("info")
-	defer syncLogger(logger)
 
 	agent := &Agent{logger: logger}
 	if err := agent.initialize(); err != nil {
 		return err
 	}
-	return agent.run()
+	agent.run()
+	return nil
 }
 
 func (a *Agent) initialize() error {
@@ -92,8 +81,7 @@ func (a *Agent) initialize() error {
 	}
 
 	a.logger.Info("Starting Strettch Cloud Console Agent",
-		zap.String("version", version),
-		zap.Int("http_port", cfg.Console.HTTPNotifyPort))
+		zap.String("version", version))
 
 	if a.processor, err = pipeline.NewProcessor(cfg, a.logger); err != nil {
 		return fmt.Errorf("processor creation failed: %w", err)
@@ -103,50 +91,16 @@ func (a *Agent) initialize() error {
 		return fmt.Errorf("processor start failed: %w", err)
 	}
 
-	a.httpServer = &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Console.HTTPNotifyPort),
-		ReadHeaderTimeout: defaultReadHeaderTimeout,
-		ReadTimeout:       defaultReadTimeout,
-		WriteTimeout:      defaultWriteTimeout,
-		IdleTimeout:       defaultIdleTimeout,
-	}
-
 	return nil
 }
 
-func (a *Agent) run() error {
-	go func() {
-		if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			a.logger.Error("HTTP server error", zap.Error(err))
-		}
-	}()
-
+func (a *Agent) run() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	sig := <-sigChan
 	a.logger.Info("Shutting down", zap.String("signal", sig.String()))
-
-	return a.shutdown()
-}
-
-func (a *Agent) shutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
-	defer cancel()
-
-	var shutdownErr error
-
-	if err := a.httpServer.Shutdown(ctx); err != nil {
-		a.logger.Error("HTTP server shutdown failed", zap.Error(err))
-		shutdownErr = err
-	}
-
-	if err := a.processor.Stop(); err != nil {
-		a.logger.Error("Processor shutdown failed", zap.Error(err))
-		shutdownErr = err
-	}
-
-	return shutdownErr
+	a.processor.Stop()
 }
 
 func initLogger(logLevel string) *zap.Logger {
@@ -180,10 +134,4 @@ func initLogger(logLevel string) *zap.Logger {
 	)
 
 	return zap.New(core, zap.AddCaller())
-}
-
-func syncLogger(logger *zap.Logger) {
-	if err := logger.Sync(); err != nil && !strings.Contains(err.Error(), "inappropriate ioctl") {
-		fmt.Fprintf(os.Stderr, "Failed to sync logger: %v\n", err)
-	}
 }
