@@ -43,7 +43,6 @@ type Config struct {
 
 type ConsoleConfig struct {
 	UDPKnockPort     int
-	HTTPNotifyPort   int
 	MaxPacketSize    int
 	SignatureTimeout int
 }
@@ -96,7 +95,6 @@ func DefaultConfig() *Config {
 		ResourceID: detectResourceID(),
 		Console: ConsoleConfig{
 			UDPKnockPort:     60124,
-			HTTPNotifyPort:   60125,
 			MaxPacketSize:    1024,
 			SignatureTimeout: 30,
 		},

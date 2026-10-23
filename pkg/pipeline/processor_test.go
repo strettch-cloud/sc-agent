@@ -72,7 +72,6 @@ func TestProcessorStartStop(t *testing.T) {
 		HeartbeatInterval:       5 * time.Minute,
 		Console: config.ConsoleConfig{
 			UDPKnockPort:     0, // Let OS choose port for testing
-			HTTPNotifyPort:   0,
 			MaxPacketSize:    1024,
 			SignatureTimeout: 30,
 		},
@@ -105,7 +104,6 @@ func TestProcessorConfiguration(t *testing.T) {
 				HeartbeatInterval:       5 * time.Minute,
 				Console: config.ConsoleConfig{
 					UDPKnockPort:     60124,
-					HTTPNotifyPort:   60125,
 					MaxPacketSize:    1024,
 					SignatureTimeout: 30,
 				},

@@ -17,7 +17,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MetadataServiceEndpoint != "" {
 		t.Errorf("MetadataServiceEndpoint = %q, want it left for Load to fill in", cfg.MetadataServiceEndpoint)
 	}
-	want := ConsoleConfig{UDPKnockPort: 60124, HTTPNotifyPort: 60125, MaxPacketSize: 1024, SignatureTimeout: 30}
+	want := ConsoleConfig{UDPKnockPort: 60124, MaxPacketSize: 1024, SignatureTimeout: 30}
 	if cfg.Console != want {
 		t.Errorf("Console = %+v, want %+v", cfg.Console, want)
 	}

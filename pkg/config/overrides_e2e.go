@@ -42,9 +42,8 @@ func applyTestOverrides(cfg *Config) {
 		}
 	}
 	for name, setting := range map[string]*int{
-		"SC_TEST_UDP_KNOCK_PORT":   &cfg.Console.UDPKnockPort,
-		"SC_TEST_HTTP_NOTIFY_PORT": &cfg.Console.HTTPNotifyPort,
-		"SC_TEST_MAX_RETRIES":      &cfg.MaxRetries,
+		"SC_TEST_UDP_KNOCK_PORT": &cfg.Console.UDPKnockPort,
+		"SC_TEST_MAX_RETRIES":    &cfg.MaxRetries,
 	} {
 		if value := os.Getenv(name); value != "" {
 			number, err := strconv.Atoi(value)
