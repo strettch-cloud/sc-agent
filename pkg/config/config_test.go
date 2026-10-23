@@ -24,6 +24,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.HTTPTimeout != 30*time.Second || cfg.KeyCleanupInterval != 120*time.Second {
 		t.Errorf("HTTP timeout %v and cleanup interval %v, want 30s and 2m0s", cfg.HTTPTimeout, cfg.KeyCleanupInterval)
 	}
+	if cfg.HeartbeatInterval != 5*time.Minute {
+		t.Errorf("heartbeat interval = %v, want 5m0s", cfg.HeartbeatInterval)
+	}
 	if cfg.MaxRetries != 3 || cfg.RetryInterval != 5*time.Second {
 		t.Errorf("%d retries every %v, want 3 every 5s", cfg.MaxRetries, cfg.RetryInterval)
 	}

@@ -35,6 +35,7 @@ type Config struct {
 	// Operational settings
 	LogLevel           string
 	KeyCleanupInterval time.Duration
+	HeartbeatInterval  time.Duration
 	MaxRetries         int
 	RetryInterval      time.Duration
 	AgentVersion       string
@@ -102,6 +103,7 @@ func DefaultConfig() *Config {
 		HTTPTimeout:        30 * time.Second,
 		LogLevel:           "info",
 		KeyCleanupInterval: 120 * time.Second,
+		HeartbeatInterval:  5 * time.Minute,
 		MaxRetries:         3,
 		RetryInterval:      5 * time.Second,
 		AgentVersion:       detectAgentVersion(),

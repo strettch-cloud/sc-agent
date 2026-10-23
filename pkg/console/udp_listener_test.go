@@ -449,3 +449,31 @@ func TestAKnockHandledAfterStopDoesNotPanic(t *testing.T) {
 
 	listener.handlePacket(knock, "192.0.2.1")
 }
+
+// Knocks beyond the queue are dropped, so the listener never blocks behind a
+// slow key install.
+func TestKnocksBeyondTheQueueAreDropped(t *testing.T) {
+	cfg := &config.Config{
+		ResourceID: "test-resource",
+		Console:    config.ConsoleConfig{MaxPacketSize: 1024, SignatureTimeout: 30},
+	}
+	listener := NewUDPListener(cfg, zap.NewNop())
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.UpdatePublicKey(hex.EncodeToString(publicKey)); err != nil {
+		t.Fatal(err)
+	}
+	timestamp := time.Now().Unix()
+	knock := binary.BigEndian.AppendUint64(nil, uint64(timestamp))
+	knock = append(knock, ed25519.Sign(privateKey, []byte(fmt.Sprintf("%s|%d", cfg.ResourceID, timestamp)))...)
+
+	for range eventChannelBuffer + 1 {
+		listener.handlePacket(knock, "192.0.2.1")
+	}
+
+	if queued := len(listener.GetEventChannel()); queued != eventChannelBuffer {
+		t.Errorf("%d knocks queued, want the queue's %d", queued, eventChannelBuffer)
+	}
+}

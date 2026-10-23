@@ -344,3 +344,19 @@ func BenchmarkNextDelay(b *testing.B) {
 		nextDelay(current, max, jitter)
 	}
 }
+// A caller that has already given up gets its context's error at once, without
+// one more attempt.
+func TestExecuteMakesNoAttemptWithACancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	attempts := 0
+
+	_, err := Execute(ctx, zap.NewNop(), "test", func(context.Context) (int, error) {
+		attempts++
+		return 0, nil
+	}, nil)
+
+	if err != context.Canceled || attempts != 0 {
+		t.Errorf("Execute = %v after %d attempts, want context.Canceled and none", err, attempts)
+	}
+}

@@ -14,6 +14,7 @@ func TestNewProcessor(t *testing.T) {
 		ResourceID:              "test-resource-123",
 		HTTPTimeout:             30 * time.Second,
 		KeyCleanupInterval:      120 * time.Second,
+		HeartbeatInterval:       5 * time.Minute,
 	}
 
 	logger := zap.NewNop()
@@ -68,6 +69,7 @@ func TestProcessorStartStop(t *testing.T) {
 		ResourceID:              "test-resource-123",
 		HTTPTimeout:             30 * time.Second,
 		KeyCleanupInterval:      120 * time.Second,
+		HeartbeatInterval:       5 * time.Minute,
 		Console: config.ConsoleConfig{
 			UDPKnockPort:     0, // Let OS choose port for testing
 			HTTPNotifyPort:   0,
@@ -100,6 +102,7 @@ func TestProcessorConfiguration(t *testing.T) {
 				ResourceID:              "test-resource-123",
 				HTTPTimeout:             30 * time.Second,
 				KeyCleanupInterval:      120 * time.Second,
+				HeartbeatInterval:       5 * time.Minute,
 				Console: config.ConsoleConfig{
 					UDPKnockPort:     60124,
 					HTTPNotifyPort:   60125,
@@ -116,6 +119,7 @@ func TestProcessorConfiguration(t *testing.T) {
 				ResourceID:              "",
 				HTTPTimeout:             30 * time.Second,
 				KeyCleanupInterval:      120 * time.Second,
+				HeartbeatInterval:       5 * time.Minute,
 			},
 			expectError: false, // NewProcessor doesn't validate config
 		},

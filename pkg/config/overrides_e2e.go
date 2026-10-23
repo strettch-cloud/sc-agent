@@ -30,6 +30,7 @@ func applyTestOverrides(cfg *Config) {
 	for name, setting := range map[string]*time.Duration{
 		"SC_TEST_HTTP_TIMEOUT":         &cfg.HTTPTimeout,
 		"SC_TEST_KEY_CLEANUP_INTERVAL": &cfg.KeyCleanupInterval,
+		"SC_TEST_HEARTBEAT_INTERVAL":   &cfg.HeartbeatInterval,
 		"SC_TEST_RETRY_INTERVAL":       &cfg.RetryInterval,
 	} {
 		if value := os.Getenv(name); value != "" {

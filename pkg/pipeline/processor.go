@@ -17,7 +17,6 @@ import (
 const (
 	// Default timeouts
 	knockProcessTimeout = 30 * time.Second
-	heartbeatInterval   = 5 * time.Minute
 )
 
 // Processor manages the console access pipeline
@@ -58,7 +57,7 @@ func NewProcessor(cfg *config.Config, logger *zap.Logger) (*Processor, error) {
 		keyManager:     keyManager,
 		udpListener:    udpListener,
 		cleanupTicker:  time.NewTicker(cfg.KeyCleanupInterval),
-		heartbeatTicker: time.NewTicker(heartbeatInterval),
+		heartbeatTicker: time.NewTicker(cfg.HeartbeatInterval),
 		version:         cfg.AgentVersion,
 		ctx:            ctx,
 		cancel:         cancel,
