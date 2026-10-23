@@ -59,7 +59,14 @@ const (
 	pollEvery    = 100 * time.Millisecond
 )
 
-var agentBinaryDirectory string
+var (
+	agentBinaryDirectory string
+	// agentCoverageDirectory is where the agents write their coverage, from
+	// AGENT_COVERAGE_DIR. `mise run test` sets it and adds that coverage to the
+	// total, because Go counts only code run inside the test process itself.
+	// Empty builds the agent without coverage.
+	agentCoverageDirectory string
+)
 
 // TestMain builds the agent once and pulls the image, so neither counts
 // against a test's timeouts.
@@ -75,10 +82,15 @@ func runTests(m *testing.M) int {
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	agentBinaryDirectory = directory
+	agentCoverageDirectory = os.Getenv("AGENT_COVERAGE_DIR")
 
 	// The e2e tag adds the SC_TEST_* settings startAgent uses.
-	build := exec.Command("go", "build", "-tags", "e2e", "-ldflags", "-X main.version="+agentVersion,
-		"-o", filepath.Join(directory, "sc-console-agent"), "../../cmd")
+	arguments := []string{"build", "-tags", "e2e", "-ldflags", "-X main.version=" + agentVersion,
+		"-o", filepath.Join(directory, "sc-console-agent")}
+	if agentCoverageDirectory != "" {
+		arguments = append(arguments, "-cover", "-coverpkg=github.com/strettch-cloud/sc-agent/...")
+	}
+	build := exec.Command("go", append(arguments, "../../cmd")...)
 	// The binary runs in a Linux container, whatever builds it.
 	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
 	if output, err := build.CombinedOutput(); err != nil {
@@ -240,8 +252,7 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		files[dmidecodePath] = fakeDMIDecode
 	}
 
-	arguments := []string{"run", "--detach", "--name", agent.name, "--network", "host",
-		"--volume", agentBinaryDirectory + ":/agent:ro"}
+	arguments := append([]string{"run", "--detach", "--name", agent.name, "--network", "host"}, agentVolumes()...)
 	arguments = append(arguments, installedFiles(t, files)...)
 	arguments = append(arguments,
 		// Free ports, so tests can run side by side on the host's network, and
@@ -264,9 +275,22 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 			logs, _ := exec.Command("docker", "logs", "--tail", "100", agent.name).CombinedOutput()
 			t.Logf("agent log:\n%s", logs)
 		}
+		// SIGTERM first: an agent killed outright writes no coverage.
+		_ = exec.Command("docker", "stop", "--time", "10", agent.name).Run()
 		_ = exec.Command("docker", "rm", "--force", agent.name).Run()
 	})
 	return agent
+}
+
+// agentVolumes returns docker run arguments every agent container needs: the
+// agent, and where it writes its coverage when it was built with coverage.
+func agentVolumes() []string {
+	arguments := []string{"--volume", agentBinaryDirectory + ":/agent:ro"}
+	if agentCoverageDirectory != "" {
+		arguments = append(arguments, "--volume", agentCoverageDirectory+":/agent-coverage",
+			"--env", "GOCOVERDIR=/agent-coverage")
+	}
+	return arguments
 }
 
 func agentYAML(cloud *fakeCloud) string {
@@ -553,7 +577,7 @@ func TestTheLogLevelInConfigYAMLApplies(t *testing.T) {
 // and returns its output and exit code.
 func validateConfig(t *testing.T, files map[string]string) (string, int) {
 	t.Helper()
-	arguments := []string{"run", "--rm", "--volume", agentBinaryDirectory + ":/agent:ro"}
+	arguments := append([]string{"run", "--rm"}, agentVolumes()...)
 	arguments = append(arguments, installedFiles(t, files)...)
 	arguments = append(arguments, image, "/agent/sc-console-agent", "-validate-config")
 
@@ -599,8 +623,8 @@ func TestValidateConfigReportsAConfigYAMLThatSetsMoreThanTheLogLevel(t *testing.
 
 func TestVersionFlagPrintsTheBuildVersion(t *testing.T) {
 	t.Parallel()
-	output, err := exec.Command("docker", "run", "--rm", "--volume", agentBinaryDirectory+":/agent:ro",
-		image, "/agent/sc-console-agent", "-v").CombinedOutput()
+	arguments := append([]string{"run", "--rm"}, agentVolumes()...)
+	output, err := exec.Command("docker", append(arguments, image, "/agent/sc-console-agent", "-v")...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("-v: %v\n%s", err, output)
 	}
