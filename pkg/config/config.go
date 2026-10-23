@@ -1,43 +1,50 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"log"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
+// Config holds the agent's settings. Only LogLevel can be changed on a VM;
+// every other setting is fixed in DefaultConfig, so a mistaken edit on many
+// VMs can't make their agents overload the platform or weaken the console.
 type Config struct {
 	// Service endpoints
-	MetadataServiceEndpoint string `yaml:"metadata_service_endpoint"`
-	
+	MetadataServiceEndpoint string
+
 	// Resource identification
-	ResourceID string `yaml:"resource_id"`
-	ResourceIP string `yaml:"resource_ip"`
-	
-	Console ConsoleConfig `yaml:"console"`
-	
+	ResourceID string
+
+	Console ConsoleConfig
+
 	// HTTP settings
-	HTTPTimeout time.Duration `yaml:"http_timeout"`
-	
+	HTTPTimeout time.Duration
+
 	// Operational settings
-	LogLevel           string        `yaml:"log_level"`
-	KeyCleanupInterval time.Duration `yaml:"key_cleanup_interval"`
-	MaxRetries         int           `yaml:"max_retries"`
-	RetryInterval      time.Duration `yaml:"retry_interval"`
-	AgentVersion       string        `yaml:"agent_version"`
+	LogLevel           string
+	KeyCleanupInterval time.Duration
+	MaxRetries         int
+	RetryInterval      time.Duration
+	AgentVersion       string
 }
 
 type ConsoleConfig struct {
-	UDPKnockPort     int `yaml:"udp_knock_port"`
-	HTTPNotifyPort   int `yaml:"http_notify_port"`
-	MaxPacketSize    int `yaml:"max_packet_size"`
-	SignatureTimeout int `yaml:"signature_timeout"`
+	UDPKnockPort     int
+	HTTPNotifyPort   int
+	MaxPacketSize    int
+	SignatureTimeout int
 }
 
 // AgentConfig represents the structure of agent.yaml
@@ -47,45 +54,45 @@ type AgentConfig struct {
 	} `yaml:"metadata_service"`
 }
 
-const agentConfigPath = "/etc/strettchcloud/config/agent.yaml"
+// These are variables only so tests can use temporary files and a fake
+// dmidecode.
+var (
+	// agentConfigPath is where the installer saves agent.yaml, which holds the
+	// metadata service address.
+	agentConfigPath = "/etc/strettchcloud/config/agent.yaml"
+	// settingsPath is the package's config.yaml, which may set the log level
+	// and nothing else.
+	settingsPath = "/etc/sc-console-agent/config.yaml"
+	// dmidecodePaths are tried in order to read the resource ID.
+	dmidecodePaths = []string{"/usr/sbin/dmidecode", "/sbin/dmidecode", "dmidecode"}
+)
 
-// readMetadataBaseURL reads the agent configuration and returns the metadata service base URL.
-// It respects SC_AGENT_CONFIG environment variable for testing purposes.
+// validLogLevels are the names the logger knows.
+var validLogLevels = []string{"debug", "info", "warn", "error"}
+
+// readMetadataBaseURL returns the metadata service base URL from agent.yaml.
 func readMetadataBaseURL() (string, error) {
-	configPath := agentConfigPath
-	if envPath := os.Getenv("SC_AGENT_CONFIG"); envPath != "" {
-		configPath = envPath
-	}
-
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(agentConfigPath)
 	if err != nil {
 		return "", fmt.Errorf("read config: %w", err)
 	}
 
 	var config AgentConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("parse config: %w", err)
+		return "", fmt.Errorf("parse config %s: %w", agentConfigPath, err)
 	}
 
 	if config.MetadataService.BaseURL == "" {
-		return "", errors.New("metadata base_url not configured")
+		return "", fmt.Errorf("metadata base_url not configured in %s", agentConfigPath)
 	}
 
 	return config.MetadataService.BaseURL, nil
 }
 
+// DefaultConfig returns the agent's fixed settings.
 func DefaultConfig() *Config {
-	metadataBaseURL, err := readMetadataBaseURL()
-	if err != nil {
-		// Agent cannot function without metadata service URL
-		panic(fmt.Sprintf("Failed to read metadata service configuration: %v", err))
-	}
-	metadataEndpoint := metadataBaseURL + "/metadata/v1/auth-token"
-
 	return &Config{
-		MetadataServiceEndpoint: metadataEndpoint,
-		ResourceID:              detectResourceID(),
-		ResourceIP:              detectResourceIP(),
+		ResourceID: detectResourceID(),
 		Console: ConsoleConfig{
 			UDPKnockPort:     60124,
 			HTTPNotifyPort:   60125,
@@ -101,35 +108,100 @@ func DefaultConfig() *Config {
 	}
 }
 
+// Load returns the configuration the agent runs with. A config.yaml or
+// SC_LOG_LEVEL the agent can't use is ignored with a warning, so a bad edit
+// can't stop the agent and the console with it.
 func Load() (*Config, error) {
-	cfg := DefaultConfig()
+	return load(false)
+}
 
-	// Load from config file if specified
-	if configPath := os.Getenv("SC_AGENT_CONFIG"); configPath != "" {
-		if err := cfg.loadFromFile(configPath); err != nil {
-			return nil, fmt.Errorf("failed to load config file %s: %w", configPath, err)
+// Validate checks the configuration as Load would, but fails on a config.yaml
+// or SC_LOG_LEVEL the agent can't use instead of ignoring it, so
+// -validate-config reports them.
+func Validate() error {
+	_, err := load(true)
+	return err
+}
+
+func load(strict bool) (*Config, error) {
+	cfg := DefaultConfig()
+	applyTestOverrides(cfg)
+
+	settingsErrors := []error{cfg.applySettingsFile(settingsPath)}
+	if level := os.Getenv("SC_LOG_LEVEL"); level != "" {
+		settingsErrors = append(settingsErrors, cfg.setLogLevel(level, "SC_LOG_LEVEL"))
+	}
+	if err := errors.Join(settingsErrors...); err != nil {
+		if strict {
+			return nil, err
 		}
+		log.Printf("Ignoring %v", err)
 	}
 
-	// Override with environment variables
-	cfg.loadFromEnv()
+	metadataBaseURL, err := readMetadataBaseURL()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read metadata service configuration: %w", err)
+	}
+	cfg.MetadataServiceEndpoint = metadataBaseURL + "/metadata/v1/auth-token"
 
-	if err := cfg.validate(); err != nil {
-		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	if cfg.ResourceID == "" {
+		return nil, fmt.Errorf("configuration validation failed: resource_id cannot be determined: dmidecode failed. Set SC_RESOURCE_ID in /etc/sc-console-agent/environment")
 	}
 
 	return cfg, nil
 }
 
+// applySettingsFile applies config.yaml, which may set log_level and nothing
+// else. A missing file changes nothing. Any other file that breaks that rule
+// is rejected whole, so an edit is never half applied.
+func (c *Config) applySettingsFile(path string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+
+	var settings struct {
+		LogLevel string `yaml:"log_level"`
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	// A file with only comments has no YAML document, which is fine.
+	if err := decoder.Decode(&settings); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%s may only set log_level: %w", path, err)
+	}
+	if settings.LogLevel == "" {
+		return nil
+	}
+	return c.setLogLevel(settings.LogLevel, path)
+}
+
+// setLogLevel sets a level the logger knows, in any case. source names where
+// the level came from, for the error.
+func (c *Config) setLogLevel(level, source string) error {
+	normalized := strings.ToLower(strings.TrimSpace(level))
+	if !slices.Contains(validLogLevels, normalized) {
+		return fmt.Errorf("%s: unknown log level %q, expected one of %s", source, level, strings.Join(validLogLevels, ", "))
+	}
+	c.LogLevel = normalized
+	return nil
+}
+
+// detectResourceID reads the resource ID with dmidecode. SC_RESOURCE_ID is
+// used only when dmidecode finds none, so it can't make a VM act as another
+// one, and a VM that already needed it keeps working.
 func detectResourceID() string {
+	if resourceID := resourceIDFromDMIDecode(); resourceID != "" {
+		return resourceID
+	}
+	return os.Getenv("SC_RESOURCE_ID")
+}
+
+func resourceIDFromDMIDecode() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	dmidecodePaths := []string{
-		"/usr/sbin/dmidecode",
-		"/sbin/dmidecode",
-		"dmidecode",
-	}
 
 	for _, dmidecodeCmd := range dmidecodePaths {
 		cmd := exec.CommandContext(ctx, dmidecodeCmd, "-s", "system-uuid")
@@ -144,41 +216,10 @@ func detectResourceID() string {
 		}
 
 		uuid := strings.TrimSpace(string(output))
-		
-		if uuid != "" && uuid != "Not Settable" && uuid != "Not Specified" && 
-		   !strings.HasPrefix(uuid, "00000000-0000-0000") {
+
+		if uuid != "" && uuid != "Not Settable" && uuid != "Not Specified" &&
+			!strings.HasPrefix(uuid, "00000000-0000-0000") {
 			return uuid
-		}
-	}
-
-	return ""
-}
-
-func detectResourceIP() string {
-	// Try hostname -I first
-	if cmd := exec.Command("hostname", "-I"); cmd != nil {
-		if output, err := cmd.Output(); err == nil {
-			ips := strings.Fields(strings.TrimSpace(string(output)))
-			if len(ips) > 0 {
-				return ips[0]
-			}
-		}
-	}
-	
-	// Fallback to ip route
-	if cmd := exec.Command("ip", "route", "get", "8.8.8.8"); cmd != nil {
-		if output, err := cmd.Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "src") {
-					parts := strings.Fields(line)
-					for i, part := range parts {
-						if part == "src" && i+1 < len(parts) {
-							return parts[i+1]
-						}
-					}
-				}
-			}
 		}
 	}
 
@@ -198,109 +239,4 @@ func detectAgentVersion() string {
 	}
 
 	return version
-}
-
-func (c *Config) loadFromFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	detectedID := c.ResourceID
-	detectedIP := c.ResourceIP
-
-	if err := yaml.Unmarshal(data, c); err != nil {
-		return err
-	}
-
-	// Restore detected values if config file has empty ones
-	if c.ResourceID == "" && detectedID != "" {
-		c.ResourceID = detectedID
-	}
-	if c.ResourceIP == "" && detectedIP != "" {
-		c.ResourceIP = detectedIP
-	}
-
-	return nil
-}
-
-func (c *Config) loadFromEnv() {
-	// Only essential environment variables
-	if val := os.Getenv("SC_METADATA_ENDPOINT"); val != "" {
-		c.MetadataServiceEndpoint = val
-	}
-	
-	// Support explicit resource ID override (for testing)
-	if val := os.Getenv("SC_RESOURCE_ID"); val != "" {
-		c.ResourceID = val
-	}
-	
-	// Support Resource IP Override
-	if val := os.Getenv("SC_RESOURCE_IP"); val != "" {
-        c.ResourceIP = val
-    }
-	
-	// Agent version
-	if val := os.Getenv("SC_AGENT_VERSION"); val != "" {
-		c.AgentVersion = val
-	}
-	
-	// Optional overrides for debugging
-	if val := os.Getenv("SC_LOG_LEVEL"); val != "" {
-		c.LogLevel = val
-	}
-}
-
-func (c *Config) validate() error {
-	if c.MetadataServiceEndpoint == "" {
-		return fmt.Errorf("metadata_service_endpoint cannot be empty")
-	}
-
-
-	if c.ResourceID == "" {
-		return fmt.Errorf("resource_id cannot be determined: dmidecode failed. Set SC_RESOURCE_ID environment variable")
-	}
-
-	if c.ResourceIP == "" {
-		return fmt.Errorf("resource_ip cannot be determined. Set SC_RESOURCE_IP environment variable")
-	}
-
-	if c.HTTPTimeout <= 0 {
-		return fmt.Errorf("http_timeout must be positive")
-	}
-
-	if c.MaxRetries < 0 {
-		return fmt.Errorf("max_retries cannot be negative")
-	}
-
-	if c.RetryInterval <= 0 {
-		return fmt.Errorf("retry_interval must be positive")
-	}
-
-	if c.KeyCleanupInterval <= 0 {
-		return fmt.Errorf("key_cleanup_interval must be positive")
-	}
-
-	if c.Console.HTTPNotifyPort <= 0 || c.Console.HTTPNotifyPort > 65535 {
-		return fmt.Errorf("http_notify_port must be between 1 and 65535")
-	}
-
-
-	if c.Console.SignatureTimeout <= 0 {
-		return fmt.Errorf("signature_timeout must be positive")
-	}
-
-	validLogLevels := []string{"debug", "info", "warn", "error"}
-	validLevel := false
-	for _, level := range validLogLevels {
-		if strings.ToLower(c.LogLevel) == level {
-			validLevel = true
-			break
-		}
-	}
-	if !validLevel {
-		return fmt.Errorf("invalid log_level: %s", c.LogLevel)
-	}
-
-	return nil
 }

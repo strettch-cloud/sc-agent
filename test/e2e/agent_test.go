@@ -7,9 +7,10 @@
 //
 // The agent writes console keys to the authorized_keys of the user running it,
 // and nothing can point it elsewhere. So it runs as root in a throwaway
-// container, never on the machine running the tests. The container shares the
-// host's network and reaches the fakes on 127.0.0.1. It needs Docker on Linux:
-// run it with `mise run test-e2e`.
+// container, never on the machine running the tests, with its config files and
+// a fake dmidecode where a VM has them. The container shares the host's
+// network and reaches the fakes on 127.0.0.1. It needs Docker on Linux: run it
+// with `mise run test-e2e`.
 package e2e
 
 import (
@@ -47,8 +48,15 @@ const (
 	consoleKeySuffix  = "-strettch_cloud_sat"
 
 	authorizedKeysPath = "/root/.ssh/authorized_keys"
-	waitForAgent       = 20 * time.Second
-	pollEvery          = 100 * time.Millisecond
+	agentYAMLPath      = "/etc/strettchcloud/config/agent.yaml"
+	configYAMLPath     = "/etc/sc-console-agent/config.yaml"
+	dmidecodePath      = "/usr/sbin/dmidecode"
+	// fakeDMIDecode prints resourceID, as a VM's firmware would. The image has
+	// no dmidecode of its own.
+	fakeDMIDecode = "#!/bin/sh\necho " + resourceID + "\n"
+
+	waitForAgent = 20 * time.Second
+	pollEvery    = 100 * time.Millisecond
 )
 
 var agentBinaryDirectory string
@@ -68,7 +76,8 @@ func runTests(m *testing.M) int {
 	defer func() { _ = os.RemoveAll(directory) }()
 	agentBinaryDirectory = directory
 
-	build := exec.Command("go", "build", "-ldflags", "-X main.version="+agentVersion,
+	// The e2e tag adds the SC_TEST_* settings startAgent uses.
+	build := exec.Command("go", "build", "-tags", "e2e", "-ldflags", "-X main.version="+agentVersion,
 		"-o", filepath.Join(directory, "sc-console-agent"), "../../cmd")
 	// The binary runs in a Linux container, whatever builds it.
 	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
@@ -186,10 +195,13 @@ func knock(signingKey ed25519.PrivateKey, signedResourceID string, sentAt time.T
 }
 
 type agentOptions struct {
-	// withoutResourceID leaves out SC_RESOURCE_ID, as on a VM where dmidecode
-	// can't read one; the image has no dmidecode.
+	// withoutResourceID leaves out the fake dmidecode, as on a VM whose
+	// firmware has no ID.
 	withoutResourceID bool
 	cleanupInterval   time.Duration
+	// configYAML is the package's config.yaml. Empty leaves it out, as on most
+	// VMs.
+	configYAML string
 }
 
 type agentContainer struct {
@@ -223,40 +235,26 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		options.cleanupInterval = time.Hour
 	}
 	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: freePort(t, "udp")}
-
-	// SC_AGENT_CONFIG replaces agent.yaml, so this one file holds the
-	// metadata address and the agent's settings.
-	configDirectory := t.TempDir()
-	config := fmt.Sprintf(`metadata_service:
-  base_url: %q
-console:
-  udp_knock_port: %d
-  http_notify_port: %d
-key_cleanup_interval: %q
-http_timeout: "2s"
-max_retries: 1
-retry_interval: "100ms"
-`, cloud.server.URL, agent.udpPort, freePort(t, "tcp"), options.cleanupInterval.String())
-	if err := os.WriteFile(filepath.Join(configDirectory, "config.yaml"), []byte(config), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The container's root must read the file whatever user created the
-	// directory.
-	if err := os.Chmod(configDirectory, 0o755); err != nil {
-		t.Fatal(err)
+	files := map[string]string{agentYAMLPath: agentYAML(cloud), configYAMLPath: options.configYAML}
+	if !options.withoutResourceID {
+		files[dmidecodePath] = fakeDMIDecode
 	}
 
 	arguments := []string{"run", "--detach", "--name", agent.name, "--network", "host",
-		"--volume", agentBinaryDirectory + ":/agent:ro",
-		"--volume", configDirectory + ":/config:ro",
-		"--env", "SC_AGENT_CONFIG=/config/config.yaml",
-		// What dpkg-query and `hostname -I` give the agent on a VM.
-		"--env", "SC_AGENT_VERSION=" + agentVersion,
-		"--env", "SC_RESOURCE_IP=127.0.0.1",
-	}
-	if !options.withoutResourceID {
-		arguments = append(arguments, "--env", "SC_RESOURCE_ID="+resourceID)
-	}
+		"--volume", agentBinaryDirectory + ":/agent:ro"}
+	arguments = append(arguments, installedFiles(t, files)...)
+	arguments = append(arguments,
+		// Free ports, so tests can run side by side on the host's network, and
+		// short waits.
+		"--env", fmt.Sprintf("SC_TEST_UDP_KNOCK_PORT=%d", agent.udpPort),
+		"--env", fmt.Sprintf("SC_TEST_HTTP_NOTIFY_PORT=%d", freePort(t, "tcp")),
+		"--env", "SC_TEST_KEY_CLEANUP_INTERVAL="+options.cleanupInterval.String(),
+		"--env", "SC_TEST_HTTP_TIMEOUT=2s",
+		"--env", "SC_TEST_MAX_RETRIES=1",
+		"--env", "SC_TEST_RETRY_INTERVAL=100ms",
+		// What dpkg-query gives the agent on a VM.
+		"--env", "SC_TEST_AGENT_VERSION="+agentVersion,
+	)
 	arguments = append(arguments, image, "/agent/sc-console-agent")
 	if output, err := exec.Command("docker", arguments...).CombinedOutput(); err != nil {
 		t.Fatalf("docker run: %v\n%s", err, output)
@@ -269,6 +267,34 @@ retry_interval: "100ms"
 		_ = exec.Command("docker", "rm", "--force", agent.name).Run()
 	})
 	return agent
+}
+
+func agentYAML(cloud *fakeCloud) string {
+	return fmt.Sprintf("metadata_service:\n  base_url: %q\n", cloud.server.URL)
+}
+
+// installedFiles returns docker run arguments that put each file at its path
+// in the container, keyed by that path. Empty content leaves that file out.
+func installedFiles(t *testing.T, files map[string]string) []string {
+	t.Helper()
+	directory := t.TempDir()
+	// The container's root must read the files whatever user created them, and
+	// run dmidecode.
+	if err := os.Chmod(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var arguments []string
+	for containerPath, content := range files {
+		if content == "" {
+			continue
+		}
+		hostPath := filepath.Join(directory, filepath.Base(containerPath))
+		if err := os.WriteFile(hostPath, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		arguments = append(arguments, "--volume", hostPath+":"+containerPath+":ro")
+	}
+	return arguments
 }
 
 func randomSuffix(t *testing.T) string {
@@ -288,6 +314,16 @@ func (agent *agentContainer) exec(t *testing.T, command ...string) string {
 		t.Fatalf("%s: %v\n%s", strings.Join(command, " "), err, output)
 	}
 	return strings.TrimSpace(string(output))
+}
+
+// logs returns everything the agent has written to stdout and stderr.
+func (agent *agentContainer) logs(t *testing.T) string {
+	t.Helper()
+	output, err := exec.Command("docker", "logs", agent.name).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker logs: %v\n%s", err, output)
+	}
+	return string(output)
 }
 
 func (agent *agentContainer) authorizedKeys(t *testing.T) string {
@@ -472,6 +508,92 @@ func TestAgentRefusesToStartWithoutAResourceID(t *testing.T) {
 	}
 	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) != 0 {
 		t.Errorf("the agent called the metadata service %d times without a resource ID", len(metadataRequests))
+	}
+}
+
+// A config.yaml may set the log level and nothing else. One that sets more is
+// ignored whole, so a mistaken edit can't stop the agent, move its ports or
+// change how long console keys stay.
+func TestAConfigYAMLThatSetsMoreThanTheLogLevelIsIgnored(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{configYAML: "log_level: debug\nconsole:\n  udp_knock_port: 1\n"})
+	agent.waitUntilReady(t, cloud)
+
+	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
+
+	eventually(t, func() bool { return strings.Contains(agent.authorizedKeys(t), consoleKey) },
+		"a knock on the agent's own port never installed the console key")
+	logs := agent.logs(t)
+	if !strings.Contains(logs, "Ignoring "+configYAMLPath+" may only set log_level") {
+		t.Errorf("the agent should say it ignored %s:\n%s", configYAMLPath, logs)
+	}
+	if strings.Contains(logs, `"level":"debug"`) {
+		t.Errorf("the agent took the debug level from a config.yaml it should have ignored:\n%s", logs)
+	}
+}
+
+func TestTheLogLevelInConfigYAMLApplies(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{configYAML: "log_level: debug\n"})
+	agent.waitUntilReady(t, cloud)
+	_, someoneElsesKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	agent.sendKnock(t, knock(someoneElsesKey, resourceID, time.Now()))
+
+	eventually(t, func() bool { return strings.Contains(agent.logs(t), "Invalid knock signature") },
+		"the agent logged nothing at debug level about a knock signed by another key")
+}
+
+// validateConfig runs -validate-config in a fresh container with these files
+// and returns its output and exit code.
+func validateConfig(t *testing.T, files map[string]string) (string, int) {
+	t.Helper()
+	arguments := []string{"run", "--rm", "--volume", agentBinaryDirectory + ":/agent:ro"}
+	arguments = append(arguments, installedFiles(t, files)...)
+	arguments = append(arguments, image, "/agent/sc-console-agent", "-validate-config")
+
+	output, err := exec.Command("docker", arguments...).CombinedOutput()
+
+	if exitError, failed := err.(*exec.ExitError); failed {
+		return string(output), exitError.ExitCode()
+	}
+	if err != nil {
+		t.Fatalf("docker run: %v\n%s", err, output)
+	}
+	return string(output), 0
+}
+
+// Without agent.yaml the agent can't find the metadata service. It used to
+// panic, -validate-config included; now it says which file is missing.
+func TestValidateConfigNamesAMissingAgentYAML(t *testing.T) {
+	t.Parallel()
+
+	output, exitCode := validateConfig(t, map[string]string{
+		configYAMLPath: "# SC-Agent Configuration\n",
+		dmidecodePath:  fakeDMIDecode,
+	})
+
+	if exitCode != 1 || !strings.Contains(output, agentYAMLPath) || strings.Contains(output, "panic") {
+		t.Errorf("-validate-config without agent.yaml exited %d, want 1 naming %s without panicking:\n%s", exitCode, agentYAMLPath, output)
+	}
+}
+
+func TestValidateConfigReportsAConfigYAMLThatSetsMoreThanTheLogLevel(t *testing.T) {
+	t.Parallel()
+
+	output, exitCode := validateConfig(t, map[string]string{
+		agentYAMLPath:  "metadata_service:\n  base_url: http://127.0.0.1:1\n",
+		configYAMLPath: "log_level: debug\nkey_cleanup_interval: 1s\n",
+		dmidecodePath:  fakeDMIDecode,
+	})
+
+	if want := configYAMLPath + " may only set log_level"; exitCode != 1 || !strings.Contains(output, want) {
+		t.Errorf("-validate-config exited %d, want 1 and %q:\n%s", exitCode, want, output)
 	}
 }
 

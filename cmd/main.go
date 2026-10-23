@@ -41,8 +41,7 @@ type Agent struct {
 func main() {
 	var (
 		showVersion    = flag.Bool("v", false, "Print version and exit")
-		validateConfig = flag.Bool("validate-config", false, "Validate configuration and exit")
-		configFile     = flag.String("config", "", "Path to configuration file")
+		validateConfig = flag.Bool("validate-config", false, "Validate configuration, including /etc/sc-console-agent/config.yaml, and exit")
 	)
 	flag.Parse()
 
@@ -51,16 +50,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Set config file path if provided
-	if *configFile != "" {
-		if err := os.Setenv("SC_AGENT_CONFIG", *configFile); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to set SC_AGENT_CONFIG environment variable: %v\n", err)
-		}
-	}
-
 	if *validateConfig {
-		_, err := config.Load()
-		if err != nil {
+		if err := config.Validate(); err != nil {
 			fmt.Fprintf(os.Stderr, "Configuration validation failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -92,11 +83,6 @@ func runAgent() error {
 func (a *Agent) initialize() error {
 	cfg, err := config.Load()
 	if err != nil {
-		if strings.Contains(err.Error(), "ResourceID cannot be determined") {
-			a.logger.Fatal("Resource_id detection failed",
-				zap.Error(err),
-				zap.String("help", "Ensure dmidecode is installed or set SC_RESOURCE_ID manually"))
-		}
 		return fmt.Errorf("config load failed: %w", err)
 	}
 	a.config = cfg
