@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -262,22 +263,14 @@ type agentContainer struct {
 	udpPort int
 }
 
-func freePort(t *testing.T, network string) int {
+func freeUDPPort(t *testing.T) int {
 	t.Helper()
-	if network == "udp" {
-		listener, err := net.ListenPacket("udp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = listener.Close() }()
-		return listener.LocalAddr().(*net.UDPAddr).Port
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = listener.Close() }()
-	return listener.Addr().(*net.TCPAddr).Port
+	return listener.LocalAddr().(*net.UDPAddr).Port
 }
 
 // startAgent runs the agent in a fresh container with only the settings a
@@ -291,7 +284,7 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		options.heartbeatInterval = time.Hour
 	}
 	if options.udpPort == 0 {
-		options.udpPort = freePort(t, "udp")
+		options.udpPort = freeUDPPort(t)
 	}
 	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: options.udpPort}
 	files := map[string]string{agentYAMLPath: agentYAML(cloud), configYAMLPath: options.configYAML}
@@ -305,7 +298,6 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		// Free ports, so tests can run side by side on the host's network, and
 		// short waits.
 		"--env", fmt.Sprintf("SC_TEST_UDP_KNOCK_PORT=%d", agent.udpPort),
-		"--env", fmt.Sprintf("SC_TEST_HTTP_NOTIFY_PORT=%d", freePort(t, "tcp")),
 		"--env", "SC_TEST_KEY_CLEANUP_INTERVAL="+options.cleanupInterval.String(),
 		"--env", "SC_TEST_HEARTBEAT_INTERVAL="+options.heartbeatInterval.String(),
 		"--env", "SC_TEST_HTTP_TIMEOUT=2s",
@@ -562,6 +554,49 @@ func TestTheConsoleKeyIsRemovedAndTheCustomersKeysStay(t *testing.T) {
 	if after := agent.exec(t, "stat", "--format=%i %y", authorizedKeysPath); after != before {
 		t.Errorf("a cleanup with no console key to remove rewrote authorized_keys: inode and time %q, then %q", before, after)
 	}
+}
+
+// The console reaches the agent only with UDP knocks. Nothing has connected
+// to it over TCP since the knocks replaced an HTTP call in 2025.
+func TestTheAgentListensOnNoTCPPort(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{})
+	agent.waitUntilReady(t, cloud)
+
+	if ports := agent.listeningTCPPorts(t); len(ports) > 0 {
+		t.Errorf("the agent listens on TCP ports %v, want none", ports)
+	}
+}
+
+// listeningTCPPorts returns the TCP ports the agent, process 1 in its
+// container, listens on. The image has no ss or netstat, so it matches the
+// agent's socket inodes against the kernel's TCP tables; the container shares
+// the host's network, so those tables list the host's sockets too.
+func (agent *agentContainer) listeningTCPPorts(t *testing.T) []int64 {
+	t.Helper()
+	agentSockets := map[string]bool{}
+	for _, target := range strings.Fields(agent.exec(t, "sh", "-c", "readlink /proc/1/fd/*")) {
+		if inode, isSocket := strings.CutPrefix(target, "socket:["); isSocket {
+			agentSockets[strings.TrimSuffix(inode, "]")] = true
+		}
+	}
+	var ports []int64
+	// tcp6 exists only where the host has IPv6.
+	for _, row := range strings.Split(agent.exec(t, "sh", "-c", "cat /proc/net/tcp*"), "\n") {
+		// Columns: sl local_address rem_address st ... inode; st 0A is LISTEN.
+		fields := strings.Fields(row)
+		if len(fields) < 10 || fields[3] != "0A" || !agentSockets[fields[9]] {
+			continue
+		}
+		localAddress := fields[1]
+		port, err := strconv.ParseInt(localAddress[strings.LastIndex(localAddress, ":")+1:], 16, 32)
+		if err != nil {
+			t.Fatalf("local address %q: %v", localAddress, err)
+		}
+		ports = append(ports, port)
+	}
+	return ports
 }
 
 func TestAgentStopsCleanlyOnSIGTERM(t *testing.T) {
