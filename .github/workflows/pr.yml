@@ -76,3 +76,28 @@ jobs:
           ls -la build/
           file build/sc-console-agent
           ./build/sc-console-agent -v
+
+  # Runs the real agent as root in a throwaway container against fake servers
+  # (test/e2e). It runs only after validation passes, so nothing is built or
+  # run before the malware scan.
+  e2e:
+    name: End to end
+    needs: validation
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain (mise.toml)
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.11
+          sha256: f9612efcddda0ae55b62d3b6f82a6c860d5b54ebee0807d4f1a1d578055e1607
+          # Only Go: the linters and scanners already ran in validation.
+          install_args: go
+
+      - name: Run the agent against fake servers
+        run: mise run test-e2e

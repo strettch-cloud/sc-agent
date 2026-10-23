@@ -19,6 +19,7 @@ mise install           # once
 mise tasks             # list every task
 mise run build         # build for this machine; GOOS/GOARCH to cross-compile
 mise run test          # tests with the race detector
+mise run test-e2e      # the real agent in Docker against fake servers; needs Docker on Linux
 mise run lint          # golangci-lint
 mise run security-scan # Trivy + govulncheck
 ```

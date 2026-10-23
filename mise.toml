@@ -57,14 +57,15 @@ run = "SC_LOG_LEVEL=debug exec $BUILD_DIR/$BINARY_NAME"
 [tasks.fmt]
 run = "golangci-lint fmt"
 
+# The e2e tag includes test/e2e, which only builds with it.
 [tasks.lint]
 description = "Check only (CI-safe)"
 depends = ["deps"]
-run = "golangci-lint run"
+run = "golangci-lint run --build-tags=e2e"
 
 [tasks.lint-fix]
 description = "Lint and auto-fix"
-run = "golangci-lint run --fix"
+run = "golangci-lint run --build-tags=e2e --fix"
 
 [tasks.lint-packaging]
 description = "shellcheck every script, and check the systemd units (CI-safe)"
@@ -110,6 +111,11 @@ if awk -v total="$total" -v minimum="$COVERAGE_MINIMUM" 'BEGIN { exit !(total < 
   exit 1
 fi
 '''
+
+[tasks.test-e2e]
+description = "Run the real agent as root in Docker against fake servers (needs Docker on Linux)"
+depends = ["deps"]
+run = "go test -tags e2e -count=1 -timeout 10m ./test/e2e/"
 
 [tasks.test-coverage]
 description = "Tests plus an HTML coverage report in coverage.html"

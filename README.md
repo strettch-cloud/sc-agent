@@ -103,6 +103,7 @@ The toolchain is pinned in `mise.toml`. Install [mise](https://mise.jdx.dev), th
 mise install           # once
 mise run build         # GOOS=linux GOARCH=arm64 mise run build to cross-compile
 mise run test
+mise run test-e2e      # the real agent in Docker against fake servers
 mise run lint
 mise run security-scan # Trivy + govulncheck
 ```
