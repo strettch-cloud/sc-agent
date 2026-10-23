@@ -7,9 +7,10 @@
 //
 // The agent writes console keys to the authorized_keys of the user running it,
 // and nothing can point it elsewhere. So it runs as root in a throwaway
-// container, never on the machine running the tests. The container shares the
-// host's network and reaches the fakes on 127.0.0.1. It needs Docker on Linux:
-// run it with `mise run test-e2e`.
+// container, never on the machine running the tests, with its config files
+// where the package installs them. The container shares the host's network
+// and reaches the fakes on 127.0.0.1. It needs Docker on Linux: run it with
+// `mise run test-e2e`.
 package e2e
 
 import (
@@ -224,36 +225,23 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 	}
 	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: freePort(t, "udp")}
 
-	// SC_AGENT_CONFIG replaces agent.yaml, so this one file holds the
-	// metadata address and the agent's settings.
-	configDirectory := t.TempDir()
-	config := fmt.Sprintf(`metadata_service:
-  base_url: %q
-console:
+	settings := fmt.Sprintf(`console:
   udp_knock_port: %d
   http_notify_port: %d
 key_cleanup_interval: %q
 http_timeout: "2s"
 max_retries: 1
 retry_interval: "100ms"
-`, cloud.server.URL, agent.udpPort, freePort(t, "tcp"), options.cleanupInterval.String())
-	if err := os.WriteFile(filepath.Join(configDirectory, "config.yaml"), []byte(config), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The container's root must read the file whatever user created the
-	// directory.
-	if err := os.Chmod(configDirectory, 0o755); err != nil {
-		t.Fatal(err)
-	}
+`, agent.udpPort, freePort(t, "tcp"), options.cleanupInterval.String())
 
 	arguments := []string{"run", "--detach", "--name", agent.name, "--network", "host",
-		"--volume", agentBinaryDirectory + ":/agent:ro",
-		"--volume", configDirectory + ":/config:ro",
-		"--env", "SC_AGENT_CONFIG=/config/config.yaml",
+		"--volume", agentBinaryDirectory + ":/agent:ro"}
+	arguments = append(arguments, installedConfigFiles(t, agentYAML(cloud), settings)...)
+	arguments = append(arguments,
 		// What dpkg-query and `hostname -I` give the agent on a VM.
-		"--env", "SC_AGENT_VERSION=" + agentVersion,
+		"--env", "SC_AGENT_VERSION="+agentVersion,
 		"--env", "SC_RESOURCE_IP=127.0.0.1",
-	}
+	)
 	if !options.withoutResourceID {
 		arguments = append(arguments, "--env", "SC_RESOURCE_ID="+resourceID)
 	}
@@ -269,6 +257,38 @@ retry_interval: "100ms"
 		_ = exec.Command("docker", "rm", "--force", agent.name).Run()
 	})
 	return agent
+}
+
+func agentYAML(cloud *fakeCloud) string {
+	return fmt.Sprintf("metadata_service:\n  base_url: %q\n", cloud.server.URL)
+}
+
+// installedConfigFiles returns docker run arguments that put the two files
+// where the package and its installer do: agent.yaml with the metadata
+// address, and the package's config.yaml with the settings. Empty content
+// leaves that file out.
+func installedConfigFiles(t *testing.T, agentYAML, settings string) []string {
+	t.Helper()
+	directory := t.TempDir()
+	// The container's root must read the files whatever user created them.
+	if err := os.Chmod(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var arguments []string
+	for containerPath, content := range map[string]string{
+		"/etc/strettchcloud/config/agent.yaml": agentYAML,
+		"/etc/sc-console-agent/config.yaml":    settings,
+	} {
+		if content == "" {
+			continue
+		}
+		hostPath := filepath.Join(directory, filepath.Base(containerPath))
+		if err := os.WriteFile(hostPath, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		arguments = append(arguments, "--volume", hostPath+":"+containerPath+":ro")
+	}
+	return arguments
 }
 
 func randomSuffix(t *testing.T) string {
@@ -472,6 +492,25 @@ func TestAgentRefusesToStartWithoutAResourceID(t *testing.T) {
 	}
 	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) != 0 {
 		t.Errorf("the agent called the metadata service %d times without a resource ID", len(metadataRequests))
+	}
+}
+
+// Without agent.yaml the agent can't find the metadata service. It used to
+// panic, -validate-config included; now it says which file is missing.
+func TestValidateConfigNamesAMissingAgentYAML(t *testing.T) {
+	t.Parallel()
+	arguments := []string{"run", "--rm", "--volume", agentBinaryDirectory + ":/agent:ro", "--env", "SC_RESOURCE_ID=" + resourceID}
+	arguments = append(arguments, installedConfigFiles(t, "", "# SC-Agent Configuration\n")...)
+	arguments = append(arguments, image, "/agent/sc-console-agent", "-validate-config")
+
+	output, err := exec.Command("docker", arguments...).CombinedOutput()
+
+	exitError, failed := err.(*exec.ExitError)
+	if !failed || exitError.ExitCode() != 1 {
+		t.Fatalf("-validate-config without agent.yaml: %v, want exit code 1\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "/etc/strettchcloud/config/agent.yaml") || strings.Contains(string(output), "panic") {
+		t.Errorf("-validate-config should name the missing agent.yaml without panicking:\n%s", output)
 	}
 }
 

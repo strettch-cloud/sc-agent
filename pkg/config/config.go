@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,16 +16,16 @@ import (
 type Config struct {
 	// Service endpoints
 	MetadataServiceEndpoint string `yaml:"metadata_service_endpoint"`
-	
+
 	// Resource identification
 	ResourceID string `yaml:"resource_id"`
 	ResourceIP string `yaml:"resource_ip"`
-	
+
 	Console ConsoleConfig `yaml:"console"`
-	
+
 	// HTTP settings
 	HTTPTimeout time.Duration `yaml:"http_timeout"`
-	
+
 	// Operational settings
 	LogLevel           string        `yaml:"log_level"`
 	KeyCleanupInterval time.Duration `yaml:"key_cleanup_interval"`
@@ -47,45 +48,37 @@ type AgentConfig struct {
 	} `yaml:"metadata_service"`
 }
 
-const agentConfigPath = "/etc/strettchcloud/config/agent.yaml"
+// agentConfigPath is where the installer saves agent.yaml, which holds the
+// metadata service address. A variable so tests can use a temporary file.
+var agentConfigPath = "/etc/strettchcloud/config/agent.yaml"
 
-// readMetadataBaseURL reads the agent configuration and returns the metadata service base URL.
-// It respects SC_AGENT_CONFIG environment variable for testing purposes.
+// settingsPath is the settings file the package installs; SC_AGENT_CONFIG
+// replaces it. A variable so tests can use a temporary file.
+var settingsPath = "/etc/sc-console-agent/config.yaml"
+
+// readMetadataBaseURL returns the metadata service base URL from agent.yaml.
 func readMetadataBaseURL() (string, error) {
-	configPath := agentConfigPath
-	if envPath := os.Getenv("SC_AGENT_CONFIG"); envPath != "" {
-		configPath = envPath
-	}
-
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(agentConfigPath)
 	if err != nil {
 		return "", fmt.Errorf("read config: %w", err)
 	}
 
 	var config AgentConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("parse config: %w", err)
+		return "", fmt.Errorf("parse config %s: %w", agentConfigPath, err)
 	}
 
 	if config.MetadataService.BaseURL == "" {
-		return "", errors.New("metadata base_url not configured")
+		return "", fmt.Errorf("metadata base_url not configured in %s", agentConfigPath)
 	}
 
 	return config.MetadataService.BaseURL, nil
 }
 
 func DefaultConfig() *Config {
-	metadataBaseURL, err := readMetadataBaseURL()
-	if err != nil {
-		// Agent cannot function without metadata service URL
-		panic(fmt.Sprintf("Failed to read metadata service configuration: %v", err))
-	}
-	metadataEndpoint := metadataBaseURL + "/metadata/v1/auth-token"
-
 	return &Config{
-		MetadataServiceEndpoint: metadataEndpoint,
-		ResourceID:              detectResourceID(),
-		ResourceIP:              detectResourceIP(),
+		ResourceID: detectResourceID(),
+		ResourceIP: detectResourceIP(),
 		Console: ConsoleConfig{
 			UDPKnockPort:     60124,
 			HTTPNotifyPort:   60125,
@@ -104,15 +97,28 @@ func DefaultConfig() *Config {
 func Load() (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Load from config file if specified
-	if configPath := os.Getenv("SC_AGENT_CONFIG"); configPath != "" {
-		if err := cfg.loadFromFile(configPath); err != nil {
-			return nil, fmt.Errorf("failed to load config file %s: %w", configPath, err)
-		}
+	configPath := os.Getenv("SC_AGENT_CONFIG")
+	configPathRequired := configPath != ""
+	if !configPathRequired {
+		configPath = settingsPath
+	}
+	metadataBaseURL, err := cfg.loadFromFile(configPath)
+	// The package installs the settings file, but the agent also runs without it.
+	if err != nil && (configPathRequired || !errors.Is(err, fs.ErrNotExist)) {
+		return nil, fmt.Errorf("failed to load config file %s: %w", configPath, err)
 	}
 
 	// Override with environment variables
 	cfg.loadFromEnv()
+
+	if cfg.MetadataServiceEndpoint == "" {
+		if metadataBaseURL == "" {
+			if metadataBaseURL, err = readMetadataBaseURL(); err != nil {
+				return nil, fmt.Errorf("failed to read metadata service configuration: %w", err)
+			}
+		}
+		cfg.MetadataServiceEndpoint = metadataBaseURL + "/metadata/v1/auth-token"
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
@@ -144,9 +150,9 @@ func detectResourceID() string {
 		}
 
 		uuid := strings.TrimSpace(string(output))
-		
-		if uuid != "" && uuid != "Not Settable" && uuid != "Not Specified" && 
-		   !strings.HasPrefix(uuid, "00000000-0000-0000") {
+
+		if uuid != "" && uuid != "Not Settable" && uuid != "Not Specified" &&
+			!strings.HasPrefix(uuid, "00000000-0000-0000") {
 			return uuid
 		}
 	}
@@ -164,7 +170,7 @@ func detectResourceIP() string {
 			}
 		}
 	}
-	
+
 	// Fallback to ip route
 	if cmd := exec.Command("ip", "route", "get", "8.8.8.8"); cmd != nil {
 		if output, err := cmd.Output(); err == nil {
@@ -200,17 +206,19 @@ func detectAgentVersion() string {
 	return version
 }
 
-func (c *Config) loadFromFile(path string) error {
+// loadFromFile loads settings from a YAML file, and returns the metadata
+// service base URL when the file sets one.
+func (c *Config) loadFromFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	detectedID := c.ResourceID
 	detectedIP := c.ResourceIP
 
 	if err := yaml.Unmarshal(data, c); err != nil {
-		return err
+		return "", err
 	}
 
 	// Restore detected values if config file has empty ones
@@ -221,7 +229,11 @@ func (c *Config) loadFromFile(path string) error {
 		c.ResourceIP = detectedIP
 	}
 
-	return nil
+	var agentConfig AgentConfig
+	if err := yaml.Unmarshal(data, &agentConfig); err != nil {
+		return "", err
+	}
+	return agentConfig.MetadataService.BaseURL, nil
 }
 
 func (c *Config) loadFromEnv() {
@@ -229,22 +241,22 @@ func (c *Config) loadFromEnv() {
 	if val := os.Getenv("SC_METADATA_ENDPOINT"); val != "" {
 		c.MetadataServiceEndpoint = val
 	}
-	
+
 	// Support explicit resource ID override (for testing)
 	if val := os.Getenv("SC_RESOURCE_ID"); val != "" {
 		c.ResourceID = val
 	}
-	
+
 	// Support Resource IP Override
 	if val := os.Getenv("SC_RESOURCE_IP"); val != "" {
-        c.ResourceIP = val
-    }
-	
+		c.ResourceIP = val
+	}
+
 	// Agent version
 	if val := os.Getenv("SC_AGENT_VERSION"); val != "" {
 		c.AgentVersion = val
 	}
-	
+
 	// Optional overrides for debugging
 	if val := os.Getenv("SC_LOG_LEVEL"); val != "" {
 		c.LogLevel = val
@@ -255,7 +267,6 @@ func (c *Config) validate() error {
 	if c.MetadataServiceEndpoint == "" {
 		return fmt.Errorf("metadata_service_endpoint cannot be empty")
 	}
-
 
 	if c.ResourceID == "" {
 		return fmt.Errorf("resource_id cannot be determined: dmidecode failed. Set SC_RESOURCE_ID environment variable")
@@ -284,7 +295,6 @@ func (c *Config) validate() error {
 	if c.Console.HTTPNotifyPort <= 0 || c.Console.HTTPNotifyPort > 65535 {
 		return fmt.Errorf("http_notify_port must be between 1 and 65535")
 	}
-
 
 	if c.Console.SignatureTimeout <= 0 {
 		return fmt.Errorf("signature_timeout must be positive")

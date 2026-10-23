@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,19 +10,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultConfig reads no file, so the machine running the test can't change
+// the result.
 func TestDefaultConfig(t *testing.T) {
-	// DefaultConfig will panic if agent.yaml doesn't exist
-	// In test environment, /etc/strettchcloud/config/agent.yaml typically doesn't exist
-	// So we expect a panic
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("DefaultConfig should panic when agent.yaml doesn't exist")
-		} else {
-			t.Logf("✓ DefaultConfig correctly panicked when agent.yaml not found: %v", r)
-		}
-	}()
+	cfg := DefaultConfig()
 
-	DefaultConfig()
+	if cfg.MetadataServiceEndpoint != "" {
+		t.Errorf("MetadataServiceEndpoint = %q, want it left for Load to fill in", cfg.MetadataServiceEndpoint)
+	}
+	if cfg.Console.UDPKnockPort != 60124 || cfg.Console.HTTPNotifyPort != 60125 {
+		t.Errorf("ports = %d/%d, want 60124/60125", cfg.Console.UDPKnockPort, cfg.Console.HTTPNotifyPort)
+	}
+	if cfg.KeyCleanupInterval != 120*time.Second || cfg.LogLevel != "info" {
+		t.Errorf("cleanup interval %v and log level %q, want 2m0s and info", cfg.KeyCleanupInterval, cfg.LogLevel)
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {
@@ -168,7 +168,7 @@ retry_interval: 10s
 	}
 
 	// Load the test config file
-	if err := cfg.loadFromFile(testConfigPath); err != nil {
+	if _, err := cfg.loadFromFile(testConfigPath); err != nil {
 		t.Fatalf("loadFromFile failed: %v", err)
 	}
 
@@ -384,7 +384,7 @@ func TestValidate(t *testing.T) {
 			errorMsg:    "invalid log_level: invalid",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a config manually instead of calling DefaultConfig() which requires agent.yaml
@@ -427,7 +427,7 @@ func TestDetectResourceID(t *testing.T) {
 	// This test is environment-dependent, so we just ensure it doesn't panic
 	// and returns a string (could be empty if dmidecode is not available)
 	resourceID := detectResourceID()
-	
+
 	// Should return a string (empty or valid UUID)
 	if resourceID != "" {
 		t.Logf("Detected resource ID: %s", resourceID)
@@ -521,26 +521,9 @@ func TestReadMetadataBaseURLFromYAML(t *testing.T) {
 					t.Fatalf("Failed to create test file: %v", err)
 				}
 			}
+			pointAt(t, &agentConfigPath, configPath)
 
-			// Test the readMetadataBaseURL logic
-			// Since readMetadataBaseURL is hardcoded to /etc/strettchcloud/config/agent.yaml,
-			// we'll test the YAML parsing logic directly
-			data, err := os.ReadFile(configPath)
-			var result string
-			var parseErr error
-
-			if err != nil {
-				parseErr = err
-			} else {
-				var agentConfig AgentConfig
-				if unmarshalErr := yaml.Unmarshal(data, &agentConfig); unmarshalErr != nil {
-					parseErr = unmarshalErr
-				} else if agentConfig.MetadataService.BaseURL == "" {
-					parseErr = fmt.Errorf("metadata_service.base_url is empty or not set")
-				} else {
-					result = agentConfig.MetadataService.BaseURL
-				}
-			}
+			result, parseErr := readMetadataBaseURL()
 
 			if tc.expectError {
 				if parseErr == nil {
