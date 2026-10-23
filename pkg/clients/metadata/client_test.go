@@ -258,7 +258,7 @@ func TestCacheExpiration(t *testing.T) {
 	client := NewClient(server.URL, 10*time.Second, zap.NewNop())
 	
 	// Set a very short cache duration
-	client.SetCacheDuration(1 * time.Millisecond)
+	client.cacheDuration = time.Millisecond
 	
 	// First call
 	info1, err := client.GetMetadata(context.Background(), "test-resource")
@@ -285,49 +285,6 @@ func TestCacheExpiration(t *testing.T) {
 	
 	if info1.Token == info2.Token {
 		t.Error("Expected different tokens after cache expiration")
-	}
-}
-
-func TestClearCache(t *testing.T) {
-	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		response := Response{
-			Token:       fmt.Sprintf("token-%d", callCount),
-			PublicKey:   stringPtr("test-key"),
-			CloudAPIUrl: "https://api.example.com",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			// Error encoding response in test
-			_ = err // Suppress staticcheck SA9003
-		}
-	}))
-	defer server.Close()
-	
-	client := NewClient(server.URL, 10*time.Second, zap.NewNop())
-	
-	// First call
-	_, err := client.GetMetadata(context.Background(), "test-resource")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	
-	if callCount != 1 {
-		t.Errorf("Expected 1 server call, got %d", callCount)
-	}
-	
-	// Clear cache
-	client.ClearCache()
-	
-	// Second call - should hit server again
-	_, err = client.GetMetadata(context.Background(), "test-resource")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	
-	if callCount != 2 {
-		t.Errorf("Expected 2 server calls after cache clear, got %d", callCount)
 	}
 }
 

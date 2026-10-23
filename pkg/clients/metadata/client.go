@@ -197,21 +197,6 @@ func (c *Client) getCached() *Info {
 	return nil
 }
 
-// SetCacheDuration updates the cache duration
-func (c *Client) SetCacheDuration(duration time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cacheDuration = duration
-}
-
-// ClearCache invalidates the cache
-func (c *Client) ClearCache() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cache = nil
-	c.cacheTime = time.Time{}
-}
-
 // Close releases resources
 func (c *Client) Close() {
 	c.httpClient.CloseIdleConnections()

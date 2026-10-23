@@ -37,29 +37,6 @@ func TestWithMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestWithDelays(t *testing.T) {
-	initial := 2 * time.Second
-	max := 10 * time.Minute
-	cfg := Default().WithDelays(initial, max)
-	
-	if cfg.InitialDelay != initial {
-		t.Errorf("Expected initial delay %v, got %v", initial, cfg.InitialDelay)
-	}
-	
-	if cfg.MaxDelay != max {
-		t.Errorf("Expected max delay %v, got %v", max, cfg.MaxDelay)
-	}
-}
-
-func TestWithJitter(t *testing.T) {
-	jitter := 0.2
-	cfg := Default().WithJitter(jitter)
-	
-	if cfg.Jitter != jitter {
-		t.Errorf("Expected jitter %v, got %v", jitter, cfg.Jitter)
-	}
-}
-
 func TestExecuteSuccess(t *testing.T) {
 	logger := zap.NewNop()
 	ctx := context.Background()
@@ -99,7 +76,8 @@ func TestExecuteRetrySuccess(t *testing.T) {
 		return "success", nil
 	}
 	
-	cfg := Default().WithMaxAttempts(5).WithDelays(10*time.Millisecond, 100*time.Millisecond)
+	cfg := Default().WithMaxAttempts(5)
+	cfg.InitialDelay, cfg.MaxDelay = 10*time.Millisecond, 100*time.Millisecond
 	
 	start := time.Now()
 	result, err := Execute(ctx, logger, "test-op", operation, cfg)
@@ -133,7 +111,8 @@ func TestExecuteMaxAttemptsExceeded(t *testing.T) {
 		return "", errors.New("persistent failure")
 	}
 	
-	cfg := Default().WithMaxAttempts(3).WithDelays(1*time.Millisecond, 10*time.Millisecond)
+	cfg := Default().WithMaxAttempts(3)
+	cfg.InitialDelay, cfg.MaxDelay = 1*time.Millisecond, 10*time.Millisecond
 	result, err := Execute(ctx, logger, "test-op", operation, cfg)
 	
 	if err != ErrMaxRetriesExceeded {
@@ -162,7 +141,8 @@ func TestExecuteContextCancellation(t *testing.T) {
 		return "", errors.New("failure")
 	}
 	
-	cfg := Default().WithMaxAttempts(5).WithDelays(10*time.Millisecond, 100*time.Millisecond)
+	cfg := Default().WithMaxAttempts(5)
+	cfg.InitialDelay, cfg.MaxDelay = 10*time.Millisecond, 100*time.Millisecond
 	result, err := Execute(ctx, logger, "test-op", operation, cfg)
 	
 	if err != context.Canceled {
@@ -188,7 +168,8 @@ func TestExecuteWithTimeout(t *testing.T) {
 		return "", errors.New("failure")
 	}
 	
-	cfg := Default().WithMaxAttempts(10).WithDelays(20*time.Millisecond, 100*time.Millisecond)
+	cfg := Default().WithMaxAttempts(10)
+	cfg.InitialDelay, cfg.MaxDelay = 20*time.Millisecond, 100*time.Millisecond
 	
 	start := time.Now()
 	result, err := Execute(ctx, logger, "test-op", operation, cfg)
@@ -219,7 +200,8 @@ func TestExecuteInfiniteRetries(t *testing.T) {
 		return "", errors.New("failure")
 	}
 	
-	cfg := Default().WithDelays(1*time.Millisecond, 10*time.Millisecond) // MaxAttempts = 0 (infinite)
+	cfg := Default() // MaxAttempts = 0 (infinite)
+	cfg.InitialDelay, cfg.MaxDelay = time.Millisecond, 10*time.Millisecond
 	result, err := Execute(ctx, logger, "test-op", operation, cfg)
 	
 	if err != context.DeadlineExceeded {
@@ -286,25 +268,6 @@ func TestNextDelay(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestSimple(t *testing.T) {
-	logger := zap.NewNop()
-	ctx := context.Background()
-	
-	operation := func(ctx context.Context) (int, error) {
-		return 42, nil
-	}
-	
-	result, err := Simple(ctx, logger, "simple-test", operation)
-	
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-	
-	if result != 42 {
-		t.Errorf("Expected result 42, got %d", result)
 	}
 }
 
