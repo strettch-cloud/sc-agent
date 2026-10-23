@@ -256,6 +256,9 @@ type agentOptions struct {
 	udpPort int
 	// user runs the agent as this user instead of root.
 	user string
+	// authorizedKeys, when set, is bind-mounted as root's authorized_keys, so
+	// the agent can read it but never replace it.
+	authorizedKeys string
 }
 
 type agentContainer struct {
@@ -287,7 +290,11 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		options.udpPort = freeUDPPort(t)
 	}
 	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: options.udpPort}
-	files := map[string]string{agentYAMLPath: agentYAML(cloud), configYAMLPath: options.configYAML}
+	files := map[string]string{
+		agentYAMLPath:      agentYAML(cloud),
+		configYAMLPath:     options.configYAML,
+		authorizedKeysPath: options.authorizedKeys,
+	}
 	if !options.withoutResourceID {
 		files[dmidecodePath] = fakeDMIDecode
 	}
