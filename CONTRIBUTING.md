@@ -18,8 +18,9 @@ The toolchain (Go, golangci-lint, Trivy, govulncheck) is pinned in `mise.toml`.
 mise install           # once
 mise tasks             # list every task
 mise run build         # build for this machine; GOOS/GOARCH to cross-compile
-mise run test          # tests with the race detector
-mise run test-e2e      # the real agent in Docker against fake servers; needs Docker on Linux
+mise run test          # unit tests with the race detector, then the real agent in Docker
+                       # against fake servers; needs Docker on Linux
+mise run test-e2e      # only the Docker tests
 mise run lint          # golangci-lint
 mise run security-scan # Trivy + govulncheck
 ```

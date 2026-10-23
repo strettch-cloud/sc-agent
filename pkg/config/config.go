@@ -35,6 +35,7 @@ type Config struct {
 	// Operational settings
 	LogLevel           string
 	KeyCleanupInterval time.Duration
+	HeartbeatInterval  time.Duration
 	MaxRetries         int
 	RetryInterval      time.Duration
 	AgentVersion       string
@@ -42,7 +43,6 @@ type Config struct {
 
 type ConsoleConfig struct {
 	UDPKnockPort     int
-	HTTPNotifyPort   int
 	MaxPacketSize    int
 	SignatureTimeout int
 }
@@ -95,13 +95,13 @@ func DefaultConfig() *Config {
 		ResourceID: detectResourceID(),
 		Console: ConsoleConfig{
 			UDPKnockPort:     60124,
-			HTTPNotifyPort:   60125,
 			MaxPacketSize:    1024,
 			SignatureTimeout: 30,
 		},
 		HTTPTimeout:        30 * time.Second,
 		LogLevel:           "info",
 		KeyCleanupInterval: 120 * time.Second,
+		HeartbeatInterval:  5 * time.Minute,
 		MaxRetries:         3,
 		RetryInterval:      5 * time.Second,
 		AgentVersion:       detectAgentVersion(),

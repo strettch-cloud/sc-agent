@@ -91,12 +91,7 @@ func (c *Client) FetchConsoleKey(ctx context.Context, authToken string) (*Consol
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			// Log error but don't fail the function
-			_ = err
-		}
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -216,11 +211,7 @@ func (c *Client) SendHeartbeat(ctx context.Context, authToken, version string) e
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			_ = err
-		}
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)

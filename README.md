@@ -75,7 +75,7 @@ The agent's settings are fixed: its ports, timeouts, retries and how long a cons
 are the same on every VM, so a mistaken edit can't break the console or make many agents
 overload the platform. The installer writes the metadata service address to
 `/etc/strettchcloud/config/agent.yaml`, and the resource ID comes from
-`dmidecode -s system-uuid`. The agent listens on UDP `60124` (knock) and TCP `60125`.
+`dmidecode -s system-uuid`. The agent listens only on UDP `60124`, for the console's knocks.
 
 The log level is the only setting you can change. Set `log_level` in
 `/etc/sc-console-agent/config.yaml` (see [`config.example.yaml`](config.example.yaml)), or
@@ -104,8 +104,8 @@ The toolchain is pinned in `mise.toml`. Install [mise](https://mise.jdx.dev), th
 ```bash
 mise install           # once
 mise run build         # GOOS=linux GOARCH=arm64 mise run build to cross-compile
-mise run test
-mise run test-e2e      # the real agent in Docker against fake servers
+mise run test          # unit tests, then the real agent in Docker against fake servers
+mise run test-e2e      # only the Docker tests
 mise run lint
 mise run security-scan # Trivy + govulncheck
 ```

@@ -8,3 +8,7 @@
 # coverage-raw.out keeps everything, so what was left out can be checked.
 #
 # Every entry needs a comment above it saying why that file cannot be tested.
+
+# The SC_TEST_* settings the end-to-end tests give the agents they start. Only
+# test builds (the e2e tag) compile it; release builds don't have it.
+pkg/config/overrides_e2e\.go:

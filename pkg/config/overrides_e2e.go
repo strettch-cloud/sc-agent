@@ -30,6 +30,7 @@ func applyTestOverrides(cfg *Config) {
 	for name, setting := range map[string]*time.Duration{
 		"SC_TEST_HTTP_TIMEOUT":         &cfg.HTTPTimeout,
 		"SC_TEST_KEY_CLEANUP_INTERVAL": &cfg.KeyCleanupInterval,
+		"SC_TEST_HEARTBEAT_INTERVAL":   &cfg.HeartbeatInterval,
 		"SC_TEST_RETRY_INTERVAL":       &cfg.RetryInterval,
 	} {
 		if value := os.Getenv(name); value != "" {
@@ -41,9 +42,8 @@ func applyTestOverrides(cfg *Config) {
 		}
 	}
 	for name, setting := range map[string]*int{
-		"SC_TEST_UDP_KNOCK_PORT":   &cfg.Console.UDPKnockPort,
-		"SC_TEST_HTTP_NOTIFY_PORT": &cfg.Console.HTTPNotifyPort,
-		"SC_TEST_MAX_RETRIES":      &cfg.MaxRetries,
+		"SC_TEST_UDP_KNOCK_PORT": &cfg.Console.UDPKnockPort,
+		"SC_TEST_MAX_RETRIES":    &cfg.MaxRetries,
 	} {
 		if value := os.Getenv(name); value != "" {
 			number, err := strconv.Atoi(value)

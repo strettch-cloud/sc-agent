@@ -210,3 +210,36 @@ func TestLoadFailsWithoutAResourceID(t *testing.T) {
 
 	assertErrorContains(t, err, "resource_id cannot be determined")
 }
+
+func TestAConfigYAMLTheAgentCantReadIsIgnored(t *testing.T) {
+	useConfigFiles(t, agentYAMLWithAddress, "")
+	if err := os.Mkdir(settingsPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg := mustLoad(t); cfg.LogLevel != "info" {
+		t.Errorf("log level = %q, want the default info", cfg.LogLevel)
+	}
+	assertErrorContains(t, Validate(), settingsPath)
+}
+
+// The heartbeat reports the version of the installed package.
+func TestTheAgentVersionComesFromTheInstalledPackage(t *testing.T) {
+	for name, testCase := range map[string]struct{ dpkgQueryOutput, want string }{
+		"installed":       {"1.4.2", "1.4.2"},
+		"nothing printed": {"", "unknown"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			script := "#!/bin/sh\nprintf '%s' '" + testCase.dpkgQueryOutput + "'\n"
+			if err := os.WriteFile(filepath.Join(directory, "dpkg-query"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			if got := detectAgentVersion(); got != testCase.want {
+				t.Errorf("detectAgentVersion() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
