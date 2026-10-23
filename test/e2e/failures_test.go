@@ -127,6 +127,26 @@ func TestAnAuthorizedKeysTheAgentCantReplaceFailsTheKnockNotTheAgent(t *testing.
 	}
 }
 
+// A bind-mounted authorized_keys can be read but never replaced, because
+// rename(2) refuses to replace a mount point. The knock fails after the agent
+// has written its temporary file, so it must remove that file.
+func TestAKnockThatCantReplaceAMountedAuthorizedKeysLeavesNothingBehind(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{authorizedKeys: customerKey + "\n"})
+	agent.waitUntilReady(t, cloud)
+
+	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
+	agent.waitForLog(t, "failed to replace authorized_keys")
+
+	if got := agent.authorizedKeys(t); got != customerKey {
+		t.Errorf("authorized_keys holds:\n%s\nwant only the customer's key", got)
+	}
+	if files := agent.exec(t, "ls", "-A", "/root/.ssh"); files != "authorized_keys" {
+		t.Errorf("/root/.ssh holds %q, want only authorized_keys: the temporary file was left behind", files)
+	}
+}
+
 func TestTheAgentExitsWhenItsKnockPortIsTaken(t *testing.T) {
 	t.Parallel()
 	taken, err := net.ListenPacket("udp", ":0")
