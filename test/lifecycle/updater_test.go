@@ -276,6 +276,34 @@ func TestUpdaterRepairsAnUpdateInterruptedByAReboot(t *testing.T) {
 	box.requireRunningAndEnabled(t, updaterTimer)
 }
 
+// A customer can hold the package (apt-mark hold) to stay on its version. dpkg
+// then reports it as "hi", which is installed and healthy: the updater must not
+// mistake it for a broken package and reinstall it, because a reinstall stops
+// the agent and drops the hold.
+func TestUpdaterLeavesAHeldAgentRunning(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	box.mustExec(t, "apt-mark", "hold", "sc-console-agent")
+	pidBefore := box.mainPID(t)
+	box.publish(t, "/packages/new.deb", trustedGPGHome)
+	// The updater's earlier runs left the package lists behind, so a reinstall
+	// could download the package, as on a VM.
+	box.mustExec(t, "apt-get", "update", "--quiet=2")
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "hi" {
+		t.Errorf("the package is %s: the hold was dropped", status)
+	}
+	box.requireRunningAndEnabled(t, agentService)
+	if box.mainPID(t) != pidBefore {
+		t.Error("the agent was restarted")
+	}
+}
+
 // Only the key in the APT source's keyring may deliver packages that run as
 // root, so a repository signed by any other key must change nothing.
 func TestUpdaterRefusesARepositorySignedByAnotherKey(t *testing.T) {
