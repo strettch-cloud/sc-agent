@@ -14,6 +14,7 @@ readonly UPDATER_TIMER="sc-console-agent-update-scheduler.timer"
 readonly RUNTIME_DIR="/var/run/sc-console-agent"
 readonly CONFIG_DIR="/etc/sc-console-agent"
 readonly CONFIG_DOWNLOAD_SCRIPT="/usr/lib/sc-console-agent/download-config.sh"
+readonly AGENT_YAML="/etc/strettchcloud/config/agent.yaml"
 
 # Helper function for colored output
 print_status() {
@@ -76,14 +77,19 @@ EOF
     chmod 644 "${CONFIG_DIR}/config.yaml"
 fi
 
-# Download latest agent configuration from repository
+# Download latest agent configuration from repository. A failed download keeps
+# the agent.yaml already on the machine (cloud-init writes one before the first
+# install), so it only stops an install that has none.
 print_status "info" "Downloading latest agent configuration..."
 if [ -x "${CONFIG_DOWNLOAD_SCRIPT}" ]; then
-    if ! "${CONFIG_DOWNLOAD_SCRIPT}"; then
+    if "${CONFIG_DOWNLOAD_SCRIPT}"; then
+        print_status "success" "Agent configuration downloaded successfully"
+    elif [ -s "${AGENT_YAML}" ]; then
+        print_status "warning" "Failed to download agent configuration, keeping ${AGENT_YAML}"
+    else
         print_status "error" "Failed to download agent configuration"
         exit 1
     fi
-    print_status "success" "Agent configuration downloaded successfully"
 else
     print_status "error" "Config download script not found at ${CONFIG_DOWNLOAD_SCRIPT}"
     exit 1
