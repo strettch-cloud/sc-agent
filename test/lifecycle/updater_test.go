@@ -1,0 +1,328 @@
+//go:build lifecycle
+
+package lifecycle
+
+import (
+	"strings"
+	"testing"
+)
+
+// These tests run the real auto-updater against a signed APT repository
+// inside the container, so apt checks the repository's signature exactly as
+// it does against repo.cloud.strettch.com.
+//
+// The updater that runs is the one installed, as on a customer's VM. So the
+// systemd test installs the latest release and upgrades to this build, the path
+// VMs take when this build ships; the others install this build and upgrade to
+// a copy of it with a higher version, so they test this build's updater.
+
+const (
+	updaterService = "sc-console-agent-update-scheduler.service"
+	repositoryPath = "/srv/apt"
+	// The keyring the agent's APT source trusts. post-install overwrites the
+	// installer's keyring with the packaged one, so the test key lives in its
+	// own file. The untrusted key signs a repository the updater must refuse.
+	trustedKeyring   = "/usr/share/keyrings/sc-console-agent-test.gpg"
+	trustedGPGHome   = "/root/gnupg-trusted"
+	untrustedGPGHome = "/root/gnupg-untrusted"
+	// The updater waits a random 0-59 s before starting and 30 s between
+	// retries. This sleep, first on PATH, caps every wait at 2 s so a run takes
+	// seconds; the systemd test below still runs with the real delay.
+	fastSleepDirectory = "/opt/lifecycle-test/bin"
+	updaterPATH        = fastSleepDirectory + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
+
+// setUpRepository creates both signing keys and points the agent's APT source
+// at the repository, the way the installer at
+// repo.cloud.strettch.com/console/install.sh points it at the real one.
+func (box *container) setUpRepository(t *testing.T) {
+	t.Helper()
+	for _, gpgHome := range []string{trustedGPGHome, untrustedGPGHome} {
+		box.mustExec(t, "mkdir", "-p", "--mode=700", gpgHome)
+		box.mustExec(t, "gpg", "--homedir", gpgHome, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+			"--quick-gen-key", "SC lifecycle test <test@invalid>", "ed25519", "sign", "never")
+	}
+	box.mustExec(t, "sh", "-c", "gpg --homedir "+trustedGPGHome+" --export > "+trustedKeyring)
+	box.mustExec(t, "mkdir", "-p", repositoryPath)
+	box.mustExec(t, "sh", "-c", "echo 'deb [signed-by="+trustedKeyring+"] file:"+repositoryPath+" ./' > /etc/apt/sources.list.d/sc-console-agent.list")
+
+	box.mustExec(t, "mkdir", "-p", fastSleepDirectory)
+	box.mustExec(t, "sh", "-c", `printf '#!/bin/sh\nexec /usr/bin/sleep "$(( $1 > 2 ? 2 : $1 ))"\n' > `+fastSleepDirectory+`/sleep && chmod +x `+fastSleepDirectory+`/sleep`)
+}
+
+// buildNewerPackage repackages this build with a version that sorts after it
+// and returns the new file's path.
+func (box *container) buildNewerPackage(t *testing.T) string {
+	t.Helper()
+	newerVersion := box.packageVersion(t, "/packages/new.deb") + "+next"
+	box.mustExec(t, "sh", "-c", strings.Join([]string{
+		"dpkg-deb --raw-extract /packages/new.deb /root/newer",
+		"sed -i 's/^Version: .*/Version: " + newerVersion + "/' /root/newer/DEBIAN/control",
+		"dpkg-deb --build /root/newer /root/newer.deb",
+	}, " && "))
+	return "/root/newer.deb"
+}
+
+// publish makes packagePath the only package in the repository, signed with
+// the key in gpgHome.
+func (box *container) publish(t *testing.T, packagePath string, gpgHome string) {
+	t.Helper()
+	box.mustExec(t, "sh", "-c", strings.Join([]string{
+		"rm -f " + repositoryPath + "/*",
+		"cp " + packagePath + " " + repositoryPath + "/",
+		"cd " + repositoryPath,
+		"apt-ftparchive packages . > Packages",
+		"apt-ftparchive release . > Release",
+		"gpg --homedir " + gpgHome + " --batch --yes --clearsign --output InRelease Release",
+	}, " && "))
+}
+
+// runUpdater runs the updater script directly, with the capped sleep, and
+// returns its output and exit code.
+func (box *container) runUpdater(t *testing.T, cloud *fakeCloud) (string, int) {
+	t.Helper()
+	return box.exec(t, []string{"PATH=" + updaterPATH, "SC_CONFIG_REPO_URL=" + cloud.configURL}, "/usr/bin/sc-console-agent-updater.sh")
+}
+
+func (box *container) installedVersion(t *testing.T) string {
+	t.Helper()
+	return box.mustExec(t, "dpkg-query", "--show", "--showformat=${Version}", "sc-console-agent")
+}
+
+func (box *container) packageVersion(t *testing.T, packageFile string) string {
+	t.Helper()
+	return box.mustExec(t, "dpkg-deb", "--field", packageFile, "Version")
+}
+
+// packageStatus is dpkg's two-letter state for the installed package: "ii"
+// when fully installed, "iU" when unpacked but not configured.
+func (box *container) packageStatus(t *testing.T) string {
+	t.Helper()
+	return box.mustExec(t, "dpkg-query", "--show", "--showformat=${db:Status-Abbrev}", "sc-console-agent")
+}
+
+// installForUpdate installs packageFile with a working fake cloud and a signed
+// repository ready to publish to.
+func installForUpdate(t *testing.T, packageFile string) (*container, *fakeCloud) {
+	t.Helper()
+	cloud := newFakeCloud(t, "")
+	box := startContainer(t)
+	box.configureAgent(t)
+	box.setUpRepository(t)
+	box.install(t, cloud, packageFile)
+	box.requireRunningAndEnabled(t, agentService)
+	return box, cloud
+}
+
+// requireRunningNewBinary checks the agent was restarted onto the upgraded
+// binary and works: dpkg replaced the file, so a process still running the old
+// one shows its executable as "(deleted)", and only an agent started after the
+// upgrade reports the new version in its heartbeat.
+func (box *container) requireRunningNewBinary(t *testing.T, cloud *fakeCloud, previousPID string) {
+	t.Helper()
+	box.requireRunningAndEnabled(t, agentService)
+	pid := box.mainPID(t)
+	if pid == previousPID {
+		t.Fatal("the agent was not restarted")
+	}
+	if executable := box.mustExec(t, "readlink", "/proc/"+pid+"/exe"); executable != "/usr/bin/sc-console-agent" {
+		t.Fatalf("the agent still runs the replaced binary: %s", executable)
+	}
+	cloud.requireHeartbeat(t, box.installedVersion(t), 0)
+}
+
+// This goes through the same systemd service the timer starts, with its real
+// random delay, so it also checks how the unit runs the updater.
+func TestUpdateTimerServiceUpgradesTheLatestReleaseToThisBuild(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "previous.deb")
+	previousPID := box.mainPID(t)
+	box.publish(t, "/packages/new.deb", trustedGPGHome)
+	// The unit doesn't pass the test's config repository through, so a drop-in does.
+	box.mustExec(t, "mkdir", "-p", "/etc/systemd/system/"+updaterService+".d")
+	box.mustExec(t, "sh", "-c", "printf '[Service]\\nEnvironment=SC_CONFIG_REPO_URL="+cloud.configURL+"\\n' > /etc/systemd/system/"+updaterService+".d/lifecycle-test.conf")
+	box.mustExec(t, "systemctl", "daemon-reload")
+
+	if output, exitCode := box.exec(t, nil, "systemctl", "start", updaterService); exitCode != 0 {
+		t.Fatalf("the updater service failed:\n%s\n%s", output,
+			box.mustExec(t, "journalctl", "--no-pager", "--unit="+updaterService))
+	}
+
+	if installed, want := box.installedVersion(t), box.packageVersion(t, "/packages/new.deb"); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	box.requireRunningNewBinary(t, cloud, previousPID)
+	box.requireRunningAndEnabled(t, updaterTimer)
+}
+
+func TestUpdaterUpgradesAndRestartsARunningAgent(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	previousPID := box.mainPID(t)
+	newerPackage := box.buildNewerPackage(t)
+	box.publish(t, newerPackage, trustedGPGHome)
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, newerPackage); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	box.requireRunningNewBinary(t, cloud, previousPID)
+	box.requireRunningAndEnabled(t, updaterTimer)
+}
+
+func TestUpdaterLeavesTheLatestVersionAlone(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	pidBefore := box.mainPID(t)
+	box.publish(t, "/packages/new.deb", trustedGPGHome)
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if !strings.Contains(output, "Already running latest version") {
+		t.Errorf("the updater didn't find the latest version installed:\n%s", output)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, "/packages/new.deb"); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	if box.mainPID(t) != pidBefore {
+		t.Error("the agent was restarted for nothing")
+	}
+}
+
+func TestUpdaterKeepsAStoppedAgentStopped(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	box.mustExec(t, "systemctl", "stop", agentService)
+	newerPackage := box.buildNewerPackage(t)
+	box.publish(t, newerPackage, trustedGPGHome)
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, newerPackage); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	if active, _ := box.unitState(t, agentService); active != "inactive" {
+		t.Errorf("the updater started an agent that was stopped: it is %s", active)
+	}
+}
+
+// The config download can fail during an update, for example when the VM's
+// network drops for a moment. The agent.yaml already on the VM still works, so
+// the update must go through and the agent keep running.
+func TestUpdaterUpgradesWhileTheConfigRepositoryIsDown(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	previousPID := box.mainPID(t)
+	newerPackage := box.buildNewerPackage(t)
+	box.publish(t, newerPackage, trustedGPGHome)
+
+	// Nothing listens on port 1, so every config download fails.
+	output, exitCode := box.exec(t, []string{"PATH=" + updaterPATH, "SC_CONFIG_REPO_URL=http://127.0.0.1:1"},
+		"/usr/bin/sc-console-agent-updater.sh")
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "ii" {
+		t.Errorf("the package is %s, not fully installed", status)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, newerPackage); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	box.requireRunningNewBinary(t, cloud, previousPID)
+	box.requireRunningAndEnabled(t, updaterTimer)
+	if got := box.mustExec(t, "cat", "/etc/strettchcloud/config/agent.yaml"); got != strings.TrimSpace(cloud.agentYAML) {
+		t.Errorf("agent.yaml is %q, want %q", got, cloud.agentYAML)
+	}
+}
+
+// A VM that reboots while the updater runs dpkg is left with the package
+// unpacked but not configured. The next run of the updater must finish the job.
+func TestUpdaterRepairsAnUpdateInterruptedByAReboot(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	newerPackage := box.buildNewerPackage(t)
+	box.publish(t, newerPackage, trustedGPGHome)
+	// What the updater's dpkg run had done when the VM went down.
+	box.mustExec(t, "env", "SC_AGENT_AUTO_UPDATER=1", "dpkg", "--unpack", newerPackage)
+	if status := box.packageStatus(t); status != "iU" {
+		t.Fatalf("the package is %s, not unpacked and unconfigured", status)
+	}
+	// At boot, systemd starts the enabled agent again.
+	box.mustExec(t, "systemctl", "start", agentService)
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "ii" {
+		t.Errorf("the package is %s, not fully installed", status)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, newerPackage); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	box.requireRunningAndEnabled(t, agentService)
+	box.requireRunningAndEnabled(t, updaterTimer)
+}
+
+// A customer can hold the package (apt-mark hold) to stay on its version. dpkg
+// then reports it as "hi", which is installed and healthy: the updater must not
+// mistake it for a broken package and reinstall it, because a reinstall stops
+// the agent and drops the hold.
+func TestUpdaterLeavesAHeldAgentRunning(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	box.mustExec(t, "apt-mark", "hold", "sc-console-agent")
+	pidBefore := box.mainPID(t)
+	box.publish(t, "/packages/new.deb", trustedGPGHome)
+	// The updater's earlier runs left the package lists behind, so a reinstall
+	// could download the package, as on a VM.
+	box.mustExec(t, "apt-get", "update", "--quiet=2")
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "hi" {
+		t.Errorf("the package is %s: the hold was dropped", status)
+	}
+	box.requireRunningAndEnabled(t, agentService)
+	if box.mainPID(t) != pidBefore {
+		t.Error("the agent was restarted")
+	}
+}
+
+// Only the key in the APT source's keyring may deliver packages that run as
+// root, so a repository signed by any other key must change nothing.
+func TestUpdaterRefusesARepositorySignedByAnotherKey(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	previousVersion := box.installedVersion(t)
+	previousPID := box.mainPID(t)
+	box.publish(t, box.buildNewerPackage(t), untrustedGPGHome)
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode == 0 {
+		t.Errorf("the updater reported success:\n%s", output)
+	}
+	if installed := box.installedVersion(t); installed != previousVersion {
+		t.Errorf("version %s is installed, want %s", installed, previousVersion)
+	}
+	box.requireRunningAndEnabled(t, agentService)
+	if box.mainPID(t) != previousPID {
+		t.Error("the agent was restarted")
+	}
+}
