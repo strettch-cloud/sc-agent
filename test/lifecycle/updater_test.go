@@ -94,6 +94,13 @@ func (box *container) packageVersion(t *testing.T, packageFile string) string {
 	return box.mustExec(t, "dpkg-deb", "--field", packageFile, "Version")
 }
 
+// packageStatus is dpkg's two-letter state for the installed package: "ii"
+// when fully installed, "iU" when unpacked but not configured.
+func (box *container) packageStatus(t *testing.T) string {
+	t.Helper()
+	return box.mustExec(t, "dpkg-query", "--show", "--showformat=${db:Status-Abbrev}", "sc-console-agent")
+}
+
 // installForUpdate installs packageFile with a working fake cloud and a signed
 // repository ready to publish to.
 func installForUpdate(t *testing.T, packageFile string) (*container, *fakeCloud) {
@@ -206,6 +213,94 @@ func TestUpdaterKeepsAStoppedAgentStopped(t *testing.T) {
 	}
 	if active, _ := box.unitState(t, agentService); active != "inactive" {
 		t.Errorf("the updater started an agent that was stopped: it is %s", active)
+	}
+}
+
+// The config download can fail during an update, for example when the VM's
+// network drops for a moment. The agent.yaml already on the VM still works, so
+// the update must go through and the agent keep running.
+func TestUpdaterUpgradesWhileTheConfigRepositoryIsDown(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	previousPID := box.mainPID(t)
+	newerPackage := box.buildNewerPackage(t)
+	box.publish(t, newerPackage, trustedGPGHome)
+
+	// Nothing listens on port 1, so every config download fails.
+	output, exitCode := box.exec(t, []string{"PATH=" + updaterPATH, "SC_CONFIG_REPO_URL=http://127.0.0.1:1"},
+		"/usr/bin/sc-console-agent-updater.sh")
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "ii" {
+		t.Errorf("the package is %s, not fully installed", status)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, newerPackage); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	box.requireRunningNewBinary(t, cloud, previousPID)
+	box.requireRunningAndEnabled(t, updaterTimer)
+	if got := box.mustExec(t, "cat", "/etc/strettchcloud/config/agent.yaml"); got != strings.TrimSpace(cloud.agentYAML) {
+		t.Errorf("agent.yaml is %q, want %q", got, cloud.agentYAML)
+	}
+}
+
+// A VM that reboots while the updater runs dpkg is left with the package
+// unpacked but not configured. The next run of the updater must finish the job.
+func TestUpdaterRepairsAnUpdateInterruptedByAReboot(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	newerPackage := box.buildNewerPackage(t)
+	box.publish(t, newerPackage, trustedGPGHome)
+	// What the updater's dpkg run had done when the VM went down.
+	box.mustExec(t, "env", "SC_AGENT_AUTO_UPDATER=1", "dpkg", "--unpack", newerPackage)
+	if status := box.packageStatus(t); status != "iU" {
+		t.Fatalf("the package is %s, not unpacked and unconfigured", status)
+	}
+	// At boot, systemd starts the enabled agent again.
+	box.mustExec(t, "systemctl", "start", agentService)
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "ii" {
+		t.Errorf("the package is %s, not fully installed", status)
+	}
+	if installed, want := box.installedVersion(t), box.packageVersion(t, newerPackage); installed != want {
+		t.Errorf("version %s is installed, want %s", installed, want)
+	}
+	box.requireRunningAndEnabled(t, agentService)
+	box.requireRunningAndEnabled(t, updaterTimer)
+}
+
+// A customer can hold the package (apt-mark hold) to stay on its version. dpkg
+// then reports it as "hi", which is installed and healthy: the updater must not
+// mistake it for a broken package and reinstall it, because a reinstall stops
+// the agent and drops the hold.
+func TestUpdaterLeavesAHeldAgentRunning(t *testing.T) {
+	t.Parallel()
+	box, cloud := installForUpdate(t, "new.deb")
+	box.mustExec(t, "apt-mark", "hold", "sc-console-agent")
+	pidBefore := box.mainPID(t)
+	box.publish(t, "/packages/new.deb", trustedGPGHome)
+	// The updater's earlier runs left the package lists behind, so a reinstall
+	// could download the package, as on a VM.
+	box.mustExec(t, "apt-get", "update", "--quiet=2")
+
+	output, exitCode := box.runUpdater(t, cloud)
+
+	if exitCode != 0 {
+		t.Fatalf("the updater exited %d:\n%s", exitCode, output)
+	}
+	if status := box.packageStatus(t); status != "hi" {
+		t.Errorf("the package is %s: the hold was dropped", status)
+	}
+	box.requireRunningAndEnabled(t, agentService)
+	if box.mainPID(t) != pidBefore {
+		t.Error("the agent was restarted")
 	}
 }
 
