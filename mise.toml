@@ -57,15 +57,17 @@ run = "SC_LOG_LEVEL=debug exec $BUILD_DIR/$BINARY_NAME"
 [tasks.fmt]
 run = "golangci-lint fmt"
 
-# The e2e tag includes test/e2e, which only builds with it.
+# The lifecycle tag includes test/lifecycle and the e2e tag test/e2e, which
+# only build with them; e2e also includes pkg/config/overrides_e2e.go, the
+# test-only overrides.
 [tasks.lint]
 description = "Check only (CI-safe)"
 depends = ["deps"]
-run = "golangci-lint run --build-tags=e2e"
+run = "golangci-lint run --build-tags=lifecycle,e2e"
 
 [tasks.lint-fix]
 description = "Lint and auto-fix"
-run = "golangci-lint run --build-tags=e2e --fix"
+run = "golangci-lint run --build-tags=lifecycle,e2e --fix"
 
 [tasks.lint-packaging]
 description = "shellcheck every script, and check the systemd units (CI-safe)"
