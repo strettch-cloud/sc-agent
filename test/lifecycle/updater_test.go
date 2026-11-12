@@ -105,7 +105,7 @@ func (box *container) packageStatus(t *testing.T) string {
 // repository ready to publish to.
 func installForUpdate(t *testing.T, packageFile string) (*container, *fakeCloud) {
 	t.Helper()
-	cloud := newFakeCloud(t, "")
+	cloud := newFakeCloud(t, true)
 	box := startContainer(t)
 	box.configureAgent(t)
 	box.setUpRepository(t)
@@ -217,8 +217,8 @@ func TestUpdaterKeepsAStoppedAgentStopped(t *testing.T) {
 }
 
 // The config download can fail during an update, for example when the VM's
-// network drops for a moment. The agent.yaml already on the VM still works, so
-// the update must go through and the agent keep running.
+// network drops for a moment. The update must still go through and the agent
+// keep running.
 func TestUpdaterUpgradesWhileTheConfigRepositoryIsDown(t *testing.T) {
 	t.Parallel()
 	box, cloud := installForUpdate(t, "new.deb")
