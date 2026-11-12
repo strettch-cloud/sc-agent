@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 
 	cfg := DefaultConfig()
 
-	if cfg.MetadataServiceEndpoint != "" {
-		t.Errorf("MetadataServiceEndpoint = %q, want it left for Load to fill in", cfg.MetadataServiceEndpoint)
+	if want := "http://169.254.169.254/metadata/v1/auth-token"; cfg.MetadataServiceEndpoint != want {
+		t.Errorf("MetadataServiceEndpoint = %q, want %q", cfg.MetadataServiceEndpoint, want)
 	}
 	want := ConsoleConfig{UDPKnockPort: 60124, MaxPacketSize: 1024, SignatureTimeout: 30}
 	if cfg.Console != want {
@@ -32,36 +32,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("log level = %q, want info", cfg.LogLevel)
-	}
-}
-
-func TestReadMetadataBaseURL(t *testing.T) {
-	for name, testCase := range map[string]struct {
-		agentYAML string
-		wantURL   string
-	}{
-		"the link-local address": {agentYAML: "metadata_service:\n  base_url: http://169.254.169.254\n", wantURL: "http://169.254.169.254"},
-		"an address with a port": {agentYAML: "metadata_service:\n  base_url: http://172.22.10.12:8000\n", wantURL: "http://172.22.10.12:8000"},
-		"no file":                {},
-		"not YAML":               {agentYAML: "invalid: yaml: content:"},
-		"an empty base_url":      {agentYAML: "metadata_service:\n  base_url: \"\"\n"},
-		"no metadata_service":    {agentYAML: "other_config:\n  value: test\n"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			pointAt(t, &agentConfigPath, writeUnlessEmpty(t, filepath.Join(t.TempDir(), "agent.yaml"), testCase.agentYAML))
-
-			url, err := readMetadataBaseURL()
-
-			if testCase.wantURL == "" {
-				if err == nil {
-					t.Errorf("readMetadataBaseURL() = %q, want an error", url)
-				}
-				return
-			}
-			if err != nil || url != testCase.wantURL {
-				t.Errorf("readMetadataBaseURL() = %q, %v, want %q", url, err, testCase.wantURL)
-			}
-		})
 	}
 }
 

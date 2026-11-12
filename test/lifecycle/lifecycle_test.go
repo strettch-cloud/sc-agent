@@ -101,6 +101,9 @@ type fakeCloud struct {
 	server    *httptest.Server
 	configURL string
 	agentYAML string
+	// metadataAddress is where the agent's requests to 169.254.169.254 go, the
+	// server's host:port, or empty when no metadata service answers.
+	metadataAddress string
 	// token is what the metadata service gives the test VM, and only it, so a
 	// heartbeat that carries it comes from an agent that read the VM's ID.
 	token string
@@ -111,9 +114,9 @@ type fakeCloud struct {
 	heartbeatVersions []string
 }
 
-// newFakeCloud serves an agent.yaml whose metadata address is metadataURL, or
-// this server's own working metadata service when metadataURL is empty.
-func newFakeCloud(t *testing.T, metadataURL string) *fakeCloud {
+// newFakeCloud starts the fake cloud, with a metadata service when
+// withMetadataService is set.
+func newFakeCloud(t *testing.T, withMetadataService bool) *fakeCloud {
 	t.Helper()
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -132,10 +135,11 @@ func newFakeCloud(t *testing.T, metadataURL string) *fakeCloud {
 	t.Cleanup(cloud.server.Close)
 
 	cloud.configURL = cloud.server.URL
-	if metadataURL == "" {
-		metadataURL = cloud.server.URL
+	if withMetadataService {
+		cloud.metadataAddress = listener.Addr().String()
 	}
-	cloud.agentYAML = fmt.Sprintf("metadata_service:\n  base_url: %q\n", metadataURL)
+	// The agent no longer reads agent.yaml, but post-install still downloads it.
+	cloud.agentYAML = "metadata_service:\n  base_url: \"http://169.254.169.254\"\n"
 	return cloud
 }
 
@@ -147,6 +151,11 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	case request.Method == http.MethodGet && request.URL.Path == "/metadata/v1/auth-token":
 		if request.Header.Get("X-Resource-ID") != testVMID {
 			http.NotFound(response, request)
+			return
+		}
+		// Like the metadata service at 169.254.169.254, refuse a request without the header.
+		if request.Header.Get("Metadata-Flavor") != "StrettchCloud" {
+			http.Error(response, "METADATA_FLAVOR_REQUIRED", http.StatusForbidden)
 			return
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -282,10 +291,24 @@ func (box *container) install(t *testing.T, cloud *fakeCloud, packageFile string
 	t.Helper()
 	command := append([]string{"apt-get", "install", "--yes"}, extraArguments...)
 	command = append(command, "/packages/"+packageFile)
+	box.routeMetadataService(t, cloud)
 	output, exitCode := box.exec(t, []string{"DEBIAN_FRONTEND=noninteractive", "SC_CONFIG_REPO_URL=" + cloud.configURL}, command...)
 	if exitCode != 0 {
 		t.Fatalf("installing %s failed:\n%s", packageFile, output)
 	}
+}
+
+// routeMetadataService sends the container's connections to 169.254.169.254,
+// the agent's fixed metadata address, to the cloud's fake metadata service, or
+// refuses them when it has none.
+func (box *container) routeMetadataService(t *testing.T, cloud *fakeCloud) {
+	t.Helper()
+	table, rule := "filter", "OUTPUT --protocol tcp --destination 169.254.169.254 --dport 80 --jump REJECT"
+	if cloud.metadataAddress != "" {
+		table, rule = "nat", "OUTPUT --protocol tcp --destination 169.254.169.254 --dport 80 --jump DNAT --to-destination "+cloud.metadataAddress
+	}
+	// Checked first, so installing twice adds the rule once.
+	box.mustExec(t, "sh", "-c", fmt.Sprintf("iptables -t %[1]s -C %[2]s 2>/dev/null || iptables -t %[1]s -A %[2]s", table, rule))
 }
 
 func (box *container) unitState(t *testing.T, unit string) (active string, enabled string) {
@@ -313,7 +336,7 @@ func (box *container) mainPID(t *testing.T) string {
 
 func TestFreshInstallReinstallCrashAndRemove(t *testing.T) {
 	t.Parallel()
-	cloud := newFakeCloud(t, "")
+	cloud := newFakeCloud(t, true)
 	box := startContainer(t)
 	box.configureAgent(t)
 	box.install(t, cloud, "new.deb")
@@ -431,8 +454,7 @@ func TestFreshInstallReinstallCrashAndRemove(t *testing.T) {
 // The install must still succeed and leave the agent enabled for first boot.
 func TestInstallSucceedsWithoutAMetadataService(t *testing.T) {
 	t.Parallel()
-	// Nothing listens on port 1, so every metadata request fails.
-	cloud := newFakeCloud(t, "http://127.0.0.1:1")
+	cloud := newFakeCloud(t, false)
 	box := startContainer(t)
 	box.configureAgent(t)
 
@@ -447,7 +469,7 @@ func TestInstallSucceedsWithoutAMetadataService(t *testing.T) {
 
 func TestUpgradeFromTheLatestRelease(t *testing.T) {
 	t.Parallel()
-	cloud := newFakeCloud(t, "")
+	cloud := newFakeCloud(t, true)
 	box := startContainer(t)
 	box.configureAgent(t)
 	box.install(t, cloud, "previous.deb")

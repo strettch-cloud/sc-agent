@@ -73,9 +73,8 @@ Remove it with `sudo apt-get purge sc-console-agent`.
 
 The agent's settings are fixed: its ports, timeouts, retries and how long a console key stays
 are the same on every VM, so a mistaken edit can't break the console or make many agents
-overload the platform. The installer writes the metadata service address to
-`/etc/strettchcloud/config/agent.yaml`, and the resource ID comes from
-`dmidecode -s system-uuid`. The agent listens only on UDP `60124`, for the console's knocks.
+overload the platform. The agent reaches the metadata service at `http://169.254.169.254`, the
+same address on every VM, and the resource ID comes from `dmidecode -s system-uuid`. The agent listens only on UDP `60124`, for the console's knocks.
 
 The log level is the only setting you can change. Set `log_level` in
 `/etc/sc-console-agent/config.yaml` (see [`config.example.yaml`](config.example.yaml)), or

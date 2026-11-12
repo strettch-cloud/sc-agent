@@ -175,7 +175,6 @@ func TestValidateConfigAcceptsAWorkingSetup(t *testing.T) {
 	t.Parallel()
 
 	output, exitCode := validateConfig(t, map[string]string{
-		agentYAMLPath:  "metadata_service:\n  base_url: http://127.0.0.1:1\n",
 		configYAMLPath: "# SC-Agent Configuration\n",
 		dmidecodePath:  fakeDMIDecode,
 	})

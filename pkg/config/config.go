@@ -47,19 +47,16 @@ type ConsoleConfig struct {
 	SignatureTimeout int
 }
 
-// AgentConfig represents the structure of agent.yaml
-type AgentConfig struct {
-	MetadataService struct {
-		BaseURL string `yaml:"base_url"`
-	} `yaml:"metadata_service"`
-}
+// Every VM reaches the metadata service at the same address, so it is fixed
+// here and nothing on a VM can point the agent elsewhere.
+const (
+	metadataServiceURL = "http://169.254.169.254"
+	tokenPath          = "/metadata/v1/auth-token"
+)
 
 // These are variables only so tests can use temporary files and a fake
 // dmidecode.
 var (
-	// agentConfigPath is where the installer saves agent.yaml, which holds the
-	// metadata service address.
-	agentConfigPath = "/etc/strettchcloud/config/agent.yaml"
 	// settingsPath is the package's config.yaml, which may set the log level
 	// and nothing else.
 	settingsPath = "/etc/sc-console-agent/config.yaml"
@@ -70,29 +67,11 @@ var (
 // validLogLevels are the names the logger knows.
 var validLogLevels = []string{"debug", "info", "warn", "error"}
 
-// readMetadataBaseURL returns the metadata service base URL from agent.yaml.
-func readMetadataBaseURL() (string, error) {
-	data, err := os.ReadFile(agentConfigPath)
-	if err != nil {
-		return "", fmt.Errorf("read config: %w", err)
-	}
-
-	var config AgentConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("parse config %s: %w", agentConfigPath, err)
-	}
-
-	if config.MetadataService.BaseURL == "" {
-		return "", fmt.Errorf("metadata base_url not configured in %s", agentConfigPath)
-	}
-
-	return config.MetadataService.BaseURL, nil
-}
-
 // DefaultConfig returns the agent's fixed settings.
 func DefaultConfig() *Config {
 	return &Config{
-		ResourceID: detectResourceID(),
+		MetadataServiceEndpoint: metadataServiceURL + tokenPath,
+		ResourceID:              detectResourceID(),
 		Console: ConsoleConfig{
 			UDPKnockPort:     60124,
 			MaxPacketSize:    1024,
@@ -137,12 +116,6 @@ func load(strict bool) (*Config, error) {
 		}
 		log.Printf("Ignoring %v", err)
 	}
-
-	metadataBaseURL, err := readMetadataBaseURL()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read metadata service configuration: %w", err)
-	}
-	cfg.MetadataServiceEndpoint = metadataBaseURL + "/metadata/v1/auth-token"
 
 	if cfg.ResourceID == "" {
 		return nil, fmt.Errorf("configuration validation failed: resource_id cannot be determined: dmidecode failed. Set SC_RESOURCE_ID in /etc/sc-console-agent/environment")

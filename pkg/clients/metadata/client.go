@@ -19,6 +19,10 @@ const (
 	HeaderXResourceID = "X-Resource-ID"
 	AcceptJSON        = "application/json"
 
+	// The metadata service at 169.254.169.254 refuses a request without this header.
+	HeaderMetadataFlavor = "Metadata-Flavor"
+	MetadataFlavor       = "StrettchCloud"
+
 	// Default settings
 	defaultCacheDuration       = 30 * time.Minute
 	defaultMaxIdleConns        = 10
@@ -171,6 +175,7 @@ func (c *Client) doRequest(ctx context.Context, url, resourceID string) (*http.R
 
 	req.Header.Set(HeaderAccept, AcceptJSON)
 	req.Header.Set(HeaderXResourceID, resourceID)
+	req.Header.Set(HeaderMetadataFlavor, MetadataFlavor)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

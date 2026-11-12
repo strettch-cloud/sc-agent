@@ -49,7 +49,6 @@ const (
 	consoleKeySuffix  = "-strettch_cloud_sat"
 
 	authorizedKeysPath = "/root/.ssh/authorized_keys"
-	agentYAMLPath      = "/etc/strettchcloud/config/agent.yaml"
 	configYAMLPath     = "/etc/sc-console-agent/config.yaml"
 	dmidecodePath      = "/usr/sbin/dmidecode"
 	// fakeDMIDecode prints resourceID, as a VM's firmware would. The image has
@@ -185,6 +184,11 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	switch {
 	case request.Method == http.MethodGet && request.URL.Path == "/metadata/v1/auth-token":
 		cloud.metadataRequests = append(cloud.metadataRequests, recorded)
+		// Like the metadata service at 169.254.169.254, refuse a request without the header.
+		if request.Header.Get("Metadata-Flavor") != "StrettchCloud" {
+			http.Error(response, "METADATA_FLAVOR_REQUIRED", http.StatusForbidden)
+			return
+		}
 		if cloud.metadataFailures > 0 {
 			cloud.metadataFailures--
 			http.Error(response, "unavailable", http.StatusServiceUnavailable)
@@ -291,7 +295,6 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 	}
 	agent := &agentContainer{name: "sc-agent-e2e-" + randomSuffix(t), udpPort: options.udpPort}
 	files := map[string]string{
-		agentYAMLPath:      agentYAML(cloud),
 		configYAMLPath:     options.configYAML,
 		authorizedKeysPath: options.authorizedKeys,
 	}
@@ -312,6 +315,8 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		"--env", "SC_TEST_RETRY_INTERVAL=100ms",
 		// What dpkg-query gives the agent on a VM.
 		"--env", "SC_TEST_AGENT_VERSION="+agentVersion,
+		// Release builds always use 169.254.169.254.
+		"--env", "SC_TEST_METADATA_URL="+cloud.server.URL,
 	)
 	if options.user != "" {
 		arguments = append(arguments, "--user", options.user)
@@ -341,10 +346,6 @@ func agentVolumes() []string {
 			"--env", "GOCOVERDIR=/agent-coverage")
 	}
 	return arguments
-}
-
-func agentYAML(cloud *fakeCloud) string {
-	return fmt.Sprintf("metadata_service:\n  base_url: %q\n", cloud.server.URL)
 }
 
 // installedFiles returns docker run arguments that put each file at its path
@@ -700,26 +701,10 @@ func validateConfig(t *testing.T, files map[string]string) (string, int) {
 	return string(output), 0
 }
 
-// Without agent.yaml the agent can't find the metadata service. It used to
-// panic, -validate-config included; now it says which file is missing.
-func TestValidateConfigNamesAMissingAgentYAML(t *testing.T) {
-	t.Parallel()
-
-	output, exitCode := validateConfig(t, map[string]string{
-		configYAMLPath: "# SC-Agent Configuration\n",
-		dmidecodePath:  fakeDMIDecode,
-	})
-
-	if exitCode != 1 || !strings.Contains(output, agentYAMLPath) || strings.Contains(output, "panic") {
-		t.Errorf("-validate-config without agent.yaml exited %d, want 1 naming %s without panicking:\n%s", exitCode, agentYAMLPath, output)
-	}
-}
-
 func TestValidateConfigReportsAConfigYAMLThatSetsMoreThanTheLogLevel(t *testing.T) {
 	t.Parallel()
 
 	output, exitCode := validateConfig(t, map[string]string{
-		agentYAMLPath:  "metadata_service:\n  base_url: http://127.0.0.1:1\n",
 		configYAMLPath: "log_level: debug\nkey_cleanup_interval: 1s\n",
 		dmidecodePath:  fakeDMIDecode,
 	})
