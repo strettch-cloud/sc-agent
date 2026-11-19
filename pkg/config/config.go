@@ -51,7 +51,7 @@ type ConsoleConfig struct {
 // here and nothing on a VM can point the agent elsewhere.
 const (
 	metadataServiceURL = "http://169.254.169.254"
-	tokenPath          = "/metadata/v1/auth-token"
+	tokenPath          = "/v1/token"
 )
 
 // These are variables only so tests can use temporary files and a fake

@@ -44,7 +44,7 @@ func TestTheTokenRequestSendsTheMetadataFlavorHeader(t *testing.T) {
 			http.Error(response, "METADATA_FLAVOR_REQUIRED", http.StatusForbidden)
 			return
 		}
-		_, _ = response.Write([]byte(`{"token":"token","cloudAPIUrl":"https://api.test.invalid"}`))
+		_, _ = response.Write([]byte(`{"token":"token","expires-at":"2030-01-01T00:00:00Z","api-url":"https://api.test.invalid","console-public-key":"knock-key"}`))
 	}))
 	defer metadataService.Close()
 	client := NewClient(metadataService.URL, time.Second, zap.NewNop())

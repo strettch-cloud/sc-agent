@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,27 +39,65 @@ func newObservedProcessor(t *testing.T, metadataService http.HandlerFunc) (*Proc
 	return processor, logs
 }
 
+// attemptsBeforeGivingUp is how many times in a row the agent asks the
+// metadata service before a startup or a knock fails.
+const attemptsBeforeGivingUp = 10
+
+// unavailableMetadataService answers every request with 503 and counts them.
+// Retry-After 0 makes the agent ask again at once instead of after 10 s.
+func unavailableMetadataService() (http.HandlerFunc, *atomic.Int32) {
+	var requests atomic.Int32
+	return func(response http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		response.Header().Set("Retry-After", "0")
+		http.Error(response, "unavailable", http.StatusServiceUnavailable)
+	}, &requests
+}
+
 func unavailable(response http.ResponseWriter, _ *http.Request) {
 	http.Error(response, "unavailable", http.StatusServiceUnavailable)
 }
 
 func TestAHeartbeatWithoutMetadataIsSkippedAndReported(t *testing.T) {
-	processor, logs := newObservedProcessor(t, unavailable)
+	metadataService, requests := unavailableMetadataService()
+	processor, logs := newObservedProcessor(t, metadataService)
 
 	processor.sendHeartbeat()
 
 	if logs.FilterMessage("Failed to get metadata for heartbeat").Len() != 1 {
 		t.Errorf("the agent didn't report the skipped heartbeat; it logged %v", logs.All())
 	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("the heartbeat asked the metadata service %d times, want 1", got)
+	}
 }
 
-func TestAKnockWithoutMetadataStopsBeforeTheKey(t *testing.T) {
-	processor, _ := newObservedProcessor(t, unavailable)
+func TestAKnockWhoseTokenFetchFails10TimesInARowStopsBeforeTheKey(t *testing.T) {
+	metadataService, requests := unavailableMetadataService()
+	processor, _ := newObservedProcessor(t, metadataService)
 
 	err := processor.processKnock(context.Background(), processor.logger)
 
 	if err == nil || !strings.Contains(err.Error(), "failed to get metadata") {
 		t.Errorf("processKnock error = %v, want one about the metadata", err)
+	}
+	if got := requests.Load(); got != attemptsBeforeGivingUp {
+		t.Errorf("the knock asked the metadata service %d times, want %d", got, attemptsBeforeGivingUp)
+	}
+}
+
+func TestTheAgentFailsToStartAfter10FailedTokenAttemptsInARow(t *testing.T) {
+	metadataService, requests := unavailableMetadataService()
+	processor, _ := newObservedProcessor(t, metadataService)
+	t.Cleanup(processor.Stop)
+
+	err := processor.Start()
+
+	if err == nil || !strings.Contains(err.Error(), "failed to fetch metadata") {
+		t.Errorf("Start error = %v, want one about the metadata", err)
+	}
+	if got := requests.Load(); got != attemptsBeforeGivingUp {
+		t.Errorf("the agent asked the metadata service %d times, want %d", got, attemptsBeforeGivingUp)
 	}
 }
 
@@ -69,7 +108,8 @@ func TestAKnockKeyTheAgentCantUseIsReported(t *testing.T) {
 	t.Cleanup(cloudAPI.Close)
 	processor, logs := newObservedProcessor(t, func(response http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(response).Encode(map[string]string{
-			"token": "token", "publicKey": "not-a-key", "cloudAPIUrl": cloudAPI.URL,
+			"token": "token", "console-public-key": "not-a-key", "api-url": cloudAPI.URL,
+			"expires-at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		})
 	})
 

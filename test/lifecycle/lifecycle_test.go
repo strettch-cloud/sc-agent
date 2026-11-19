@@ -148,7 +148,7 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	// download-config.sh fetches <repo>/<environment>/agent.yaml.
 	case request.Method == http.MethodGet && request.URL.Path == "/production/agent.yaml":
 		_, _ = response.Write([]byte(cloud.agentYAML))
-	case request.Method == http.MethodGet && request.URL.Path == "/metadata/v1/auth-token":
+	case request.Method == http.MethodGet && request.URL.Path == "/v1/token":
 		// Like the metadata service at 169.254.169.254, refuse a request without the header.
 		if request.Header.Get("Metadata-Flavor") != "StrettchCloud" {
 			http.Error(response, "METADATA_FLAVOR_REQUIRED", http.StatusForbidden)
@@ -156,7 +156,8 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(map[string]string{
-			"token": cloud.token, "cloudAPIUrl": cloud.server.URL, "publicKey": cloud.knockKey,
+			"token": cloud.token, "expires-at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			"api-url": cloud.server.URL, "console-public-key": cloud.knockKey,
 		})
 	case request.Method == http.MethodPost && request.URL.Path == "/resource-manager/api/v1/compute/agent/heartbeat":
 		var heartbeat struct {

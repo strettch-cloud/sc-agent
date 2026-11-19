@@ -146,28 +146,12 @@ func (c *Client) doRequest(ctx context.Context, url, authToken string) (*http.Re
 	return resp, nil
 }
 
-// getCloudAPIEndpoint retrieves the cloud API URL with retry
+// getCloudAPIEndpoint returns the API address the metadata service gave with the token.
 func (c *Client) getCloudAPIEndpoint(ctx context.Context) (string, error) {
-	// Try cached value first
-	info, err := c.metadataClient.GetMetadata(ctx)
-	if err == nil {
-		return info.CloudAPIURL, nil
-	}
-
-	c.logger.Debug("Cache miss, fetching with retry", zap.Error(err))
-
-	// Use limited retries for runtime operations
-	cfg := retry.Default().WithMaxAttempts(5)
-
-	info, err = retry.Execute(ctx, c.logger, "get-cloud-api-endpoint",
-		func(ctx context.Context) (*metadata.Info, error) {
-			return c.metadataClient.GetMetadata(ctx)
-		}, cfg)
-
+	info, err := c.metadataClient.GetMetadataWithRetry(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get metadata: %w", err)
 	}
-
 	return info.CloudAPIURL, nil
 }
 

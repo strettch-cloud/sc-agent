@@ -133,6 +133,8 @@ func TestFetchConsoleKey(t *testing.T) {
 				response := metadata.Response{
 					Token:       "meta-token",
 					CloudAPIUrl: server.URL,
+					PublicKey:   "knock-key",
+					ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 				}
 				w.Header().Set("Content-Type", "application/json")
 				if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -203,6 +205,8 @@ func TestFetchConsoleKeyWithRetry(t *testing.T) {
 		response := metadata.Response{
 			Token:       "meta-token",
 			CloudAPIUrl: server.URL,
+			PublicKey:   "knock-key",
+			ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -251,6 +255,8 @@ func TestContextCancellation(t *testing.T) {
 		response := metadata.Response{
 			Token:       "meta-token",
 			CloudAPIUrl: server.URL,
+			PublicKey:   "knock-key",
+			ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {

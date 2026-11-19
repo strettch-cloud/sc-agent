@@ -16,7 +16,7 @@ import (
 
 const (
 	// Default timeouts
-	knockProcessTimeout = 30 * time.Second
+	knockProcessTimeout = 2 * time.Minute
 )
 
 // Processor manages the console access pipeline
@@ -124,14 +124,10 @@ func (p *Processor) initialize() error {
 	ctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
 
-	// Get metadata with infinite retry for startup
-	metadata, err := p.metadataClient.GetMetadataForStartup(ctx)
+	// After the last failed attempt the agent exits, and systemd starts it again.
+	metadata, err := p.metadataClient.GetMetadataWithRetry(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch metadata: %w", err)
-	}
-
-	if metadata.PublicKey == "" {
-		return fmt.Errorf("metadata service did not provide public key")
 	}
 
 	// Configure UDP listener with public key
@@ -216,17 +212,15 @@ func (p *Processor) handleKnock(event console.UDPKnockEvent) {
 // processKnock handles the key installation for a knock event
 func (p *Processor) processKnock(ctx context.Context, logger *zap.Logger) error {
 	// Get fresh metadata
-	metadata, err := p.metadataClient.GetMetadataWithRetry(ctx, p.config.MaxRetries)
+	metadata, err := p.metadataClient.GetMetadataWithRetry(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get metadata: %w", err)
 	}
 
 	// Update UDP listener with latest public signing key
-	if metadata.PublicKey != "" {
-		logger.Debug("Updating UDP listener public key")
-		if err := p.udpListener.UpdatePublicKey(metadata.PublicKey); err != nil {
-			logger.Warn("Failed to update public key", zap.Error(err))
-		}
+	logger.Debug("Updating UDP listener public key")
+	if err := p.udpListener.UpdatePublicKey(metadata.PublicKey); err != nil {
+		logger.Warn("Failed to update public key", zap.Error(err))
 	}
 
 	// Fetch console key

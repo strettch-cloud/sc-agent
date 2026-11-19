@@ -12,3 +12,7 @@
 # The SC_TEST_* settings the end-to-end tests give the agents they start. Only
 # test builds (the e2e tag) compile it; release builds don't have it.
 pkg/config/overrides_e2e\.go:
+
+# The SC_TEST_TOKEN_RETRY_DELAY setting the end-to-end tests give the agents
+# they start. Only test builds (the e2e tag) compile it.
+pkg/clients/metadata/overrides_e2e\.go:

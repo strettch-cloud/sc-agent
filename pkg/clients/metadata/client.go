@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -22,8 +23,15 @@ const (
 	HeaderMetadataFlavor = "Metadata-Flavor"
 	MetadataFlavor       = "StrettchCloud"
 
-	// Default settings
-	defaultCacheDuration       = 30 * time.Minute
+	// How long values are held at most, and how long before its expiry a token is no longer used.
+	cacheDuration = 30 * time.Minute
+	expiryMargin  = time.Minute
+
+	// Every token fetch asks at most maxAttempts times, retryDelay apart unless the service's Retry-After asks
+	// for another wait, which is capped at maxRetryAfter.
+	maxAttempts   = 10
+	maxRetryAfter = time.Minute
+
 	defaultMaxIdleConns        = 10
 	defaultMaxIdleConnsPerHost = 10
 	defaultIdleConnTimeout     = 90 * time.Second
@@ -34,26 +42,33 @@ type Info struct {
 	Token       string
 	PublicKey   string
 	CloudAPIURL string
+	ExpiresAt   time.Time
 }
 
-// Response represents the raw API response
+// Response is the metadata service's answer on /v1/token for an agent in a VM.
 type Response struct {
-	Token       string  `json:"token"`
-	PublicKey   *string `json:"publicKey,omitempty"`
-	CloudAPIUrl string  `json:"cloudAPIUrl"`
+	Token       string `json:"token"`
+	ExpiresAt   string `json:"expires-at"`
+	PublicKey   string `json:"console-public-key"`
+	CloudAPIUrl string `json:"api-url"`
 }
+
+// retryDelay is a variable only so the end-to-end build can shorten it (overrides_e2e.go).
+var retryDelay = 10 * time.Second
 
 // Client handles metadata service communication with caching
 type Client struct {
-	endpoint      string
-	httpClient    *http.Client
-	logger        *zap.Logger
-	cacheDuration time.Duration
+	endpoint   string
+	httpClient *http.Client
+	logger     *zap.Logger
 
-	// Cache fields
+	// now and wait are replaced by tests so they run without real clocks or delays.
+	now  func() time.Time
+	wait func(ctx context.Context, d time.Duration) error
+
 	mu        sync.RWMutex
 	cache     *Info
-	cacheTime time.Time
+	heldUntil time.Time
 }
 
 // NewClient creates a new metadata service client
@@ -70,99 +85,157 @@ func NewClient(endpoint string, timeout time.Duration, logger *zap.Logger) *Clie
 			Timeout:   timeout,
 			Transport: transport,
 		},
-		logger:        logger,
-		cacheDuration: defaultCacheDuration,
+		logger: logger,
+		now:    time.Now,
+		wait:   sleep,
 	}
 }
 
-// GetMetadata retrieves metadata (token, public key, and API URL)
+func sleep(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// GetMetadata returns the held values, or asks the metadata service once.
 func (c *Client) GetMetadata(ctx context.Context) (*Info, error) {
-	// Check cache first
 	if info := c.getCached(); info != nil {
 		return info, nil
 	}
-
-	// Fetch fresh data
-	return c.fetchMetadata(ctx)
+	info, _, err := c.fetchMetadata(ctx)
+	return info, err
 }
 
-// GetMetadataWithRetry retrieves metadata with retry logic
-func (c *Client) GetMetadataWithRetry(ctx context.Context, maxAttempts int) (*Info, error) {
-	cfg := retry.Default().WithMaxAttempts(maxAttempts)
-
-	return retry.Execute(ctx, c.logger, "get-metadata",
-		func(ctx context.Context) (*Info, error) {
-			return c.GetMetadata(ctx)
-		}, cfg)
+// GetMetadataWithRetry asks up to maxAttempts times, waiting retryDelay between attempts, or what the service's
+// Retry-After asks for, up to maxRetryAfter.
+func (c *Client) GetMetadataWithRetry(ctx context.Context) (*Info, error) {
+	if info := c.getCached(); info != nil {
+		return info, nil
+	}
+	for attempt := 1; ; attempt++ {
+		info, retryAfter, err := c.fetchMetadata(ctx)
+		if err == nil {
+			return info, nil
+		}
+		if attempt == maxAttempts {
+			c.logger.Error("Metadata service failed on every attempt",
+				zap.Int("attempts", attempt), zap.Error(err))
+			return nil, fmt.Errorf("%w: %w", retry.ErrMaxRetriesExceeded, err)
+		}
+		delay := retryDelay
+		if retryAfter >= 0 {
+			delay = min(retryAfter, maxRetryAfter)
+		}
+		c.logger.Warn("Asking the metadata service again",
+			zap.Int("attempt", attempt), zap.Duration("retry_in", delay), zap.Error(err))
+		if err := c.wait(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
 }
 
-// GetMetadataForStartup retrieves metadata with infinite retry for startup scenarios
-func (c *Client) GetMetadataForStartup(ctx context.Context) (*Info, error) {
-	// Use default config (infinite retries)
-	return retry.Execute(ctx, c.logger, "get-metadata-startup",
-		func(ctx context.Context) (*Info, error) {
-			return c.GetMetadata(ctx)
-		}, nil)
-}
-
-// fetchMetadata retrieves fresh metadata from the service
-func (c *Client) fetchMetadata(ctx context.Context) (*Info, error) {
+// fetchMetadata asks the metadata service once. retryAfter is the wait the answer asked for, or -1 when it
+// asked for none the agent can read.
+func (c *Client) fetchMetadata(ctx context.Context) (info *Info, retryAfter time.Duration, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Double-check cache after acquiring lock
-	if c.cache != nil && time.Since(c.cacheTime) < c.cacheDuration {
-		return c.cache, nil
+	// Another caller may have fetched while this one waited for the lock.
+	if c.cache != nil && c.now().Before(c.heldUntil) {
+		return c.cache, -1, nil
 	}
 
-	// Make request
-	url := fmt.Sprintf("%s?includePublicKey=True", c.endpoint)
-	resp, err := c.doRequest(ctx, url)
+	resp, err := c.doRequest(ctx, c.endpoint)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), c.now())
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, retryAfter, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		c.logger.Error("Metadata service error",
 			zap.Int("status", resp.StatusCode),
 			zap.String("body", string(body)))
-		return nil, fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
+		return nil, retryAfter, fmt.Errorf("metadata service returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
+	info, err = c.parseAnswer(body)
+	if err != nil {
+		return nil, retryAfter, err
+	}
+
+	// Held for at most cacheDuration, and never past expiryMargin before the token expires.
+	c.cache = info
+	c.heldUntil = minTime(c.now().Add(cacheDuration), info.ExpiresAt.Add(-expiryMargin))
+	c.logger.Debug("Metadata held", zap.Time("held_until", c.heldUntil))
+	return info, -1, nil
+}
+
+// parseAnswer refuses an answer missing any of the four values, or whose token is about to expire, so the next
+// attempt asks again.
+func (c *Client) parseAnswer(body []byte) (*Info, error) {
 	var apiResp Response
 	if err := json.Unmarshal(body, &apiResp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-
 	if apiResp.Token == "" {
 		return nil, fmt.Errorf("empty token in response")
 	}
-
-	// Build info object
-	info := &Info{
+	if apiResp.CloudAPIUrl == "" {
+		return nil, fmt.Errorf("empty API address in response")
+	}
+	if apiResp.PublicKey == "" {
+		return nil, fmt.Errorf("empty console public key in response")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, apiResp.ExpiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("unreadable token expiry %q in response: %w", apiResp.ExpiresAt, err)
+	}
+	if !c.now().Add(expiryMargin).Before(expiresAt) {
+		return nil, fmt.Errorf("token expires at %s, too soon to use", apiResp.ExpiresAt)
+	}
+	return &Info{
 		Token:       apiResp.Token,
+		PublicKey:   apiResp.PublicKey,
 		CloudAPIURL: apiResp.CloudAPIUrl,
+		ExpiresAt:   expiresAt,
+	}, nil
+}
+
+// parseRetryAfter reads a Retry-After of seconds or an HTTP date, and returns -1 when there is none it can read.
+// A date in the past means no wait.
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	if value == "" {
+		return -1
 	}
-	if apiResp.PublicKey != nil {
-		info.PublicKey = *apiResp.PublicKey
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds < 0 {
+			return -1
+		}
+		return time.Duration(seconds) * time.Second
 	}
+	date, err := http.ParseTime(value)
+	if err != nil {
+		return -1
+	}
+	return max(date.Sub(now), 0)
+}
 
-	// Update cache
-	c.cache = info
-	c.cacheTime = time.Now()
-
-	c.logger.Debug("Metadata cached",
-		zap.Time("cached_at", c.cacheTime),
-		zap.Duration("ttl", c.cacheDuration))
-
-	return info, nil
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // doRequest performs an HTTP GET request
@@ -186,17 +259,14 @@ func (c *Client) doRequest(ctx context.Context, url string) (*http.Response, err
 	return resp, nil
 }
 
-// getCached returns cached info if valid
+// getCached returns the held values while they may still be used.
 func (c *Client) getCached() *Info {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if c.cache != nil && time.Since(c.cacheTime) < c.cacheDuration {
-		ttl := c.cacheDuration - time.Since(c.cacheTime)
-		c.logger.Debug("Using cached metadata", zap.Duration("ttl", ttl))
+	if c.cache != nil && c.now().Before(c.heldUntil) {
 		return c.cache
 	}
-
 	return nil
 }
 
