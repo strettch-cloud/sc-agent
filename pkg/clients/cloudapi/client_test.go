@@ -16,18 +16,13 @@ import (
 func TestNewClient(t *testing.T) {
 	// Create a simple metadata client
 	metaClient := metadata.NewClient("http://example.com", 10*time.Second, zap.NewNop())
-	resourceID := "test-resource-123"
 	timeout := 30 * time.Second
 	logger := zap.NewNop()
 
-	client := NewClient(metaClient, resourceID, timeout, logger)
+	client := NewClient(metaClient, timeout, logger)
 
 	if client == nil {
 		t.Fatal("Expected non-nil client")
-	}
-
-	if client.resourceID != resourceID {
-		t.Errorf("Expected resource ID %s, got %s", resourceID, client.resourceID)
 	}
 
 	if client.logger != logger {
@@ -148,7 +143,7 @@ func TestFetchConsoleKey(t *testing.T) {
 			defer metaServer.Close()
 
 			metaClient := metadata.NewClient(metaServer.URL, 10*time.Second, zap.NewNop())
-			client := NewClient(metaClient, "test-resource", 10*time.Second, zap.NewNop())
+			client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
 			key, err := client.FetchConsoleKey(context.Background(), tt.authToken)
 
@@ -218,7 +213,7 @@ func TestFetchConsoleKeyWithRetry(t *testing.T) {
 	defer metaServer.Close()
 
 	metaClient := metadata.NewClient(metaServer.URL, 1*time.Second, zap.NewNop())
-	client := NewClient(metaClient, "test-resource", 1*time.Second, zap.NewNop())
+	client := NewClient(metaClient, 1*time.Second, zap.NewNop())
 
 	key, err := client.FetchConsoleKeyWithRetry(context.Background(), "test-token", 5)
 	if err != nil {
@@ -266,7 +261,7 @@ func TestContextCancellation(t *testing.T) {
 	defer metaServer.Close()
 
 	metaClient := metadata.NewClient(metaServer.URL, 10*time.Second, zap.NewNop())
-	client := NewClient(metaClient, "test-resource", 10*time.Second, zap.NewNop())
+	client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -283,7 +278,7 @@ func TestContextCancellation(t *testing.T) {
 
 func TestClose(t *testing.T) {
 	metaClient := metadata.NewClient("http://example.com", 10*time.Second, zap.NewNop())
-	client := NewClient(metaClient, "test-resource", 10*time.Second, zap.NewNop())
+	client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
 	// This should not panic
 	client.Close()

@@ -55,12 +55,11 @@ type HeartbeatRequest struct {
 type Client struct {
 	httpClient     *http.Client
 	logger         *zap.Logger
-	resourceID     string
 	metadataClient *metadata.Client
 }
 
 // NewClient creates a new cloud API client
-func NewClient(metadataClient *metadata.Client, resourceID string, timeout time.Duration, logger *zap.Logger) *Client {
+func NewClient(metadataClient *metadata.Client, timeout time.Duration, logger *zap.Logger) *Client {
 	transport := &http.Transport{
 		MaxIdleConns:        defaultMaxIdleConns,
 		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
@@ -68,7 +67,6 @@ func NewClient(metadataClient *metadata.Client, resourceID string, timeout time.
 	}
 
 	return &Client{
-		resourceID:     resourceID,
 		metadataClient: metadataClient,
 		httpClient: &http.Client{
 			Timeout:   timeout,
@@ -151,7 +149,7 @@ func (c *Client) doRequest(ctx context.Context, url, authToken string) (*http.Re
 // getCloudAPIEndpoint retrieves the cloud API URL with retry
 func (c *Client) getCloudAPIEndpoint(ctx context.Context) (string, error) {
 	// Try cached value first
-	info, err := c.metadataClient.GetMetadata(ctx, c.resourceID)
+	info, err := c.metadataClient.GetMetadata(ctx)
 	if err == nil {
 		return info.CloudAPIURL, nil
 	}
@@ -163,7 +161,7 @@ func (c *Client) getCloudAPIEndpoint(ctx context.Context) (string, error) {
 
 	info, err = retry.Execute(ctx, c.logger, "get-cloud-api-endpoint",
 		func(ctx context.Context) (*metadata.Info, error) {
-			return c.metadataClient.GetMetadata(ctx, c.resourceID)
+			return c.metadataClient.GetMetadata(ctx)
 		}, cfg)
 
 	if err != nil {

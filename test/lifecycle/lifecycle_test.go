@@ -149,10 +149,6 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	case request.Method == http.MethodGet && request.URL.Path == "/production/agent.yaml":
 		_, _ = response.Write([]byte(cloud.agentYAML))
 	case request.Method == http.MethodGet && request.URL.Path == "/metadata/v1/auth-token":
-		if request.Header.Get("X-Resource-ID") != testVMID {
-			http.NotFound(response, request)
-			return
-		}
 		// Like the metadata service at 169.254.169.254, refuse a request without the header.
 		if request.Header.Get("Metadata-Flavor") != "StrettchCloud" {
 			http.Error(response, "METADATA_FLAVOR_REQUIRED", http.StatusForbidden)

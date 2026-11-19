@@ -26,7 +26,7 @@ func TestMetadataTheAgentCantUseIsAnError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := NewClient(testCase.endpoint, time.Second, zap.NewNop())
 
-			_, err := client.GetMetadata(context.Background(), "resource")
+			_, err := client.GetMetadata(context.Background())
 
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Errorf("GetMetadata error = %v, want one containing %q", err, testCase.want)
@@ -49,7 +49,7 @@ func TestTheTokenRequestSendsTheMetadataFlavorHeader(t *testing.T) {
 	defer metadataService.Close()
 	client := NewClient(metadataService.URL, time.Second, zap.NewNop())
 
-	info, err := client.GetMetadata(context.Background(), "resource")
+	info, err := client.GetMetadata(context.Background())
 
 	if err != nil {
 		t.Fatalf("GetMetadata error = %v, want none", err)
