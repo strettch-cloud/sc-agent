@@ -55,7 +55,7 @@ func TestARequestRetriesTheMetadataService(t *testing.T) {
 	cloudAPI := newCloudAPI(t, func(response http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(response).Encode(ConsoleKeyResponse{Data: ConsoleKey{PublicKey: "ssh-ed25519 AAAA console"}})
 	})
-	client := NewClient(newMetadataClient(t, cloudAPI, 2), "resource", time.Second, zap.NewNop())
+	client := NewClient(newMetadataClient(t, cloudAPI, 2), time.Second, zap.NewNop())
 
 	key, err := client.FetchConsoleKey(context.Background(), "token")
 
@@ -75,7 +75,7 @@ func TestRequestsFailWhileTheMetadataServiceStaysDown(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			client := NewClient(newMetadataClient(t, "http://unused.invalid", 1000), "resource", time.Second, zap.NewNop())
+			client := NewClient(newMetadataClient(t, "http://unused.invalid", 1000), time.Second, zap.NewNop())
 			// Long enough for one retry, short of waiting for all five.
 			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 			defer cancel()
@@ -101,7 +101,7 @@ func TestAConsoleKeyResponseTheAgentCantUseIsAnError(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			client := NewClient(newMetadataClient(t, newCloudAPI(t, testCase.respond), 0), "resource", time.Second, zap.NewNop())
+			client := NewClient(newMetadataClient(t, newCloudAPI(t, testCase.respond), 0), time.Second, zap.NewNop())
 
 			_, err := client.FetchConsoleKey(context.Background(), "token")
 
@@ -114,7 +114,7 @@ func TestAConsoleKeyResponseTheAgentCantUseIsAnError(t *testing.T) {
 // error rather than a crash.
 func TestAMalformedCloudAPIAddressFailsRequests(t *testing.T) {
 	t.Parallel()
-	client := NewClient(newMetadataClient(t, "http://[::1", 0), "resource", time.Second, zap.NewNop())
+	client := NewClient(newMetadataClient(t, "http://[::1", 0), time.Second, zap.NewNop())
 
 	_, err := client.FetchConsoleKey(context.Background(), "token")
 	assertErrorContains(t, err, "failed to create request")
@@ -125,7 +125,7 @@ func TestAHeartbeatToAnUnreachableCloudAPIFails(t *testing.T) {
 	t.Parallel()
 	closed := httptest.NewServer(http.NotFoundHandler())
 	closed.Close()
-	client := NewClient(newMetadataClient(t, closed.URL, 0), "resource", time.Second, zap.NewNop())
+	client := NewClient(newMetadataClient(t, closed.URL, 0), time.Second, zap.NewNop())
 
 	assertErrorContains(t, client.SendHeartbeat(context.Background(), "token", "1.0.0"), "request failed")
 }

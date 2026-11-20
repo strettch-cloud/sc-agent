@@ -15,9 +15,8 @@ import (
 
 const (
 	// HTTP headers
-	HeaderAccept      = "Accept"
-	HeaderXResourceID = "X-Resource-ID"
-	AcceptJSON        = "application/json"
+	HeaderAccept = "Accept"
+	AcceptJSON   = "application/json"
 
 	// The metadata service at 169.254.169.254 refuses a request without this header.
 	HeaderMetadataFlavor = "Metadata-Flavor"
@@ -77,37 +76,37 @@ func NewClient(endpoint string, timeout time.Duration, logger *zap.Logger) *Clie
 }
 
 // GetMetadata retrieves metadata (token, public key, and API URL)
-func (c *Client) GetMetadata(ctx context.Context, resourceID string) (*Info, error) {
+func (c *Client) GetMetadata(ctx context.Context) (*Info, error) {
 	// Check cache first
 	if info := c.getCached(); info != nil {
 		return info, nil
 	}
 
 	// Fetch fresh data
-	return c.fetchMetadata(ctx, resourceID)
+	return c.fetchMetadata(ctx)
 }
 
 // GetMetadataWithRetry retrieves metadata with retry logic
-func (c *Client) GetMetadataWithRetry(ctx context.Context, resourceID string, maxAttempts int) (*Info, error) {
+func (c *Client) GetMetadataWithRetry(ctx context.Context, maxAttempts int) (*Info, error) {
 	cfg := retry.Default().WithMaxAttempts(maxAttempts)
 
 	return retry.Execute(ctx, c.logger, "get-metadata",
 		func(ctx context.Context) (*Info, error) {
-			return c.GetMetadata(ctx, resourceID)
+			return c.GetMetadata(ctx)
 		}, cfg)
 }
 
 // GetMetadataForStartup retrieves metadata with infinite retry for startup scenarios
-func (c *Client) GetMetadataForStartup(ctx context.Context, resourceID string) (*Info, error) {
+func (c *Client) GetMetadataForStartup(ctx context.Context) (*Info, error) {
 	// Use default config (infinite retries)
 	return retry.Execute(ctx, c.logger, "get-metadata-startup",
 		func(ctx context.Context) (*Info, error) {
-			return c.GetMetadata(ctx, resourceID)
+			return c.GetMetadata(ctx)
 		}, nil)
 }
 
 // fetchMetadata retrieves fresh metadata from the service
-func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, error) {
+func (c *Client) fetchMetadata(ctx context.Context) (*Info, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -118,7 +117,7 @@ func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, e
 
 	// Make request
 	url := fmt.Sprintf("%s?includePublicKey=True", c.endpoint)
-	resp, err := c.doRequest(ctx, url, resourceID)
+	resp, err := c.doRequest(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -167,14 +166,13 @@ func (c *Client) fetchMetadata(ctx context.Context, resourceID string) (*Info, e
 }
 
 // doRequest performs an HTTP GET request
-func (c *Client) doRequest(ctx context.Context, url, resourceID string) (*http.Response, error) {
+func (c *Client) doRequest(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set(HeaderAccept, AcceptJSON)
-	req.Header.Set(HeaderXResourceID, resourceID)
 	req.Header.Set(HeaderMetadataFlavor, MetadataFlavor)
 
 	resp, err := c.httpClient.Do(req)

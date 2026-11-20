@@ -45,7 +45,7 @@ func NewProcessor(cfg *config.Config, logger *zap.Logger) (*Processor, error) {
 
 	udpListener := console.NewUDPListener(cfg, logger)
 	metadataClient := metadata.NewClient(cfg.MetadataServiceEndpoint, cfg.HTTPTimeout, logger)
-	cloudAPIClient := cloudapi.NewClient(metadataClient, cfg.ResourceID, cfg.HTTPTimeout, logger)
+	cloudAPIClient := cloudapi.NewClient(metadataClient, cfg.HTTPTimeout, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -125,7 +125,7 @@ func (p *Processor) initialize() error {
 	defer cancel()
 
 	// Get metadata with infinite retry for startup
-	metadata, err := p.metadataClient.GetMetadataForStartup(ctx, p.config.ResourceID)
+	metadata, err := p.metadataClient.GetMetadataForStartup(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch metadata: %w", err)
 	}
@@ -216,7 +216,7 @@ func (p *Processor) handleKnock(event console.UDPKnockEvent) {
 // processKnock handles the key installation for a knock event
 func (p *Processor) processKnock(ctx context.Context, logger *zap.Logger) error {
 	// Get fresh metadata
-	metadata, err := p.metadataClient.GetMetadataWithRetry(ctx, p.config.ResourceID, p.config.MaxRetries)
+	metadata, err := p.metadataClient.GetMetadataWithRetry(ctx, p.config.MaxRetries)
 	if err != nil {
 		return fmt.Errorf("failed to get metadata: %w", err)
 	}
@@ -285,7 +285,7 @@ func (p *Processor) sendHeartbeat() {
 	ctx, cancel := context.WithTimeout(p.ctx, 30*time.Second)
 	defer cancel()
 
-	metadata, err := p.metadataClient.GetMetadata(ctx, p.config.ResourceID)
+	metadata, err := p.metadataClient.GetMetadata(ctx)
 	if err != nil {
 		p.logger.Error("Failed to get metadata for heartbeat", zap.Error(err))
 		return

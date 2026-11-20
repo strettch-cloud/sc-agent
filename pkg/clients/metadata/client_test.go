@@ -45,7 +45,6 @@ func TestGetMetadata(t *testing.T) {
 	tests := []struct {
 		name           string
 		serverResponse func(w http.ResponseWriter, r *http.Request)
-		resourceID     string
 		expectError    bool
 		expectedInfo   *Info
 	}{
@@ -55,10 +54,6 @@ func TestGetMetadata(t *testing.T) {
 				// Verify request headers
 				if r.Header.Get(HeaderAccept) != AcceptJSON {
 					t.Errorf("Expected Accept header %s, got %s", AcceptJSON, r.Header.Get(HeaderAccept))
-				}
-				
-				if r.Header.Get(HeaderXResourceID) != "test-resource" {
-					t.Errorf("Expected X-Resource-ID header test-resource, got %s", r.Header.Get(HeaderXResourceID))
 				}
 				
 				// Verify query parameter
@@ -78,7 +73,6 @@ func TestGetMetadata(t *testing.T) {
 					_ = err // Suppress staticcheck SA9003
 				}
 			},
-			resourceID:  "test-resource",
 			expectError: false,
 			expectedInfo: &Info{
 				Token:       "test-token-123",
@@ -101,7 +95,6 @@ func TestGetMetadata(t *testing.T) {
 					_ = err // Suppress staticcheck SA9003
 				}
 			},
-			resourceID:  "test-resource",
 			expectError: false,
 			expectedInfo: &Info{
 				Token:       "test-token-456",
@@ -118,7 +111,6 @@ func TestGetMetadata(t *testing.T) {
 					_ = err // Suppress staticcheck SA9003
 				}
 			},
-			resourceID:  "test-resource",
 			expectError: true,
 		},
 		{
@@ -135,7 +127,6 @@ func TestGetMetadata(t *testing.T) {
 					_ = err // Suppress staticcheck SA9003
 				}
 			},
-			resourceID:  "test-resource",
 			expectError: true,
 		},
 		{
@@ -147,7 +138,6 @@ func TestGetMetadata(t *testing.T) {
 					_ = err // Suppress staticcheck SA9003
 				}
 			},
-			resourceID:  "test-resource",
 			expectError: true,
 		},
 	}
@@ -159,7 +149,7 @@ func TestGetMetadata(t *testing.T) {
 			
 			client := NewClient(server.URL, 10*time.Second, zap.NewNop())
 			
-			info, err := client.GetMetadata(context.Background(), tt.resourceID)
+			info, err := client.GetMetadata(context.Background())
 			
 			if tt.expectError {
 				if err == nil {
@@ -210,7 +200,7 @@ func TestCaching(t *testing.T) {
 	client := NewClient(server.URL, 10*time.Second, zap.NewNop())
 	
 	// First call - should hit server
-	info1, err := client.GetMetadata(context.Background(), "test-resource")
+	info1, err := client.GetMetadata(context.Background())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -224,7 +214,7 @@ func TestCaching(t *testing.T) {
 	}
 	
 	// Second call - should use cache
-	info2, err := client.GetMetadata(context.Background(), "test-resource")
+	info2, err := client.GetMetadata(context.Background())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -261,7 +251,7 @@ func TestCacheExpiration(t *testing.T) {
 	client.cacheDuration = time.Millisecond
 	
 	// First call
-	info1, err := client.GetMetadata(context.Background(), "test-resource")
+	info1, err := client.GetMetadata(context.Background())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -274,7 +264,7 @@ func TestCacheExpiration(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	
 	// Second call - should hit server again
-	info2, err := client.GetMetadata(context.Background(), "test-resource")
+	info2, err := client.GetMetadata(context.Background())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -312,7 +302,7 @@ func TestGetMetadataWithRetry(t *testing.T) {
 	
 	client := NewClient(server.URL, 1*time.Second, zap.NewNop())
 	
-	info, err := client.GetMetadataWithRetry(context.Background(), "test-resource", 5)
+	info, err := client.GetMetadataWithRetry(context.Background(), 5)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -353,7 +343,7 @@ func TestGetMetadataForStartup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	
-	info, err := client.GetMetadataForStartup(ctx, "test-resource")
+	info, err := client.GetMetadataForStartup(ctx)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -388,7 +378,7 @@ func TestContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	
-	_, err := client.GetMetadata(ctx, "test-resource")
+	_, err := client.GetMetadata(ctx)
 	if err == nil {
 		t.Error("Expected timeout error")
 	}
@@ -408,10 +398,6 @@ func TestClose(t *testing.T) {
 func TestConstants(t *testing.T) {
 	if HeaderAccept != "Accept" {
 		t.Errorf("Expected HeaderAccept to be 'Accept', got '%s'", HeaderAccept)
-	}
-	
-	if HeaderXResourceID != "X-Resource-ID" {
-		t.Errorf("Expected HeaderXResourceID to be 'X-Resource-ID', got '%s'", HeaderXResourceID)
 	}
 	
 	if AcceptJSON != "application/json" {
@@ -488,7 +474,7 @@ func BenchmarkGetMetadata(b *testing.B) {
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := client.GetMetadata(context.Background(), "test-resource")
+		_, err := client.GetMetadata(context.Background())
 		if err != nil {
 			b.Fatalf("Unexpected error: %v", err)
 		}
@@ -513,14 +499,14 @@ func BenchmarkGetMetadataCached(b *testing.B) {
 	client := NewClient(server.URL, 10*time.Second, zap.NewNop())
 	
 	// Prime the cache
-	_, err := client.GetMetadata(context.Background(), "test-resource")
+	_, err := client.GetMetadata(context.Background())
 	if err != nil {
 		b.Fatalf("Failed to prime cache: %v", err)
 	}
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := client.GetMetadata(context.Background(), "test-resource")
+		_, err := client.GetMetadata(context.Background())
 		if err != nil {
 			b.Fatalf("Unexpected error: %v", err)
 		}

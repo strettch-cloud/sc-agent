@@ -128,8 +128,8 @@ func eventually(t *testing.T, condition func() bool, failure string) {
 
 type recordedRequest struct {
 	query         string
-	resourceID    string
 	authorization string
+	headers       http.Header
 	body          []byte
 }
 
@@ -174,8 +174,8 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	body, _ := io.ReadAll(request.Body)
 	recorded := recordedRequest{
 		query:         request.URL.RawQuery,
-		resourceID:    request.Header.Get("X-Resource-ID"),
 		authorization: request.Header.Get("Authorization"),
+		headers:       request.Header.Clone(),
 		body:          body,
 	}
 
@@ -451,9 +451,6 @@ func TestAgentSendsAHeartbeatWhenItStarts(t *testing.T) {
 	agent.waitUntilReady(t, cloud)
 
 	metadataRequests, _, heartbeats := cloud.snapshot()
-	if got := metadataRequests[0].resourceID; got != resourceID {
-		t.Errorf("metadata request X-Resource-ID = %q, want %q", got, resourceID)
-	}
 	if got := metadataRequests[0].query; got != "includePublicKey=True" {
 		t.Errorf("metadata request query = %q, want the knock key included", got)
 	}
@@ -473,6 +470,28 @@ func TestAgentSendsAHeartbeatWhenItStarts(t *testing.T) {
 	}
 	if _, err := time.Parse(time.RFC3339, heartbeat.EventTime); err != nil {
 		t.Errorf("heartbeat eventTime %q is not RFC 3339: %v", heartbeat.EventTime, err)
+	}
+}
+
+// The agent names no VM: the metadata service knows the VM from where the
+// request comes, not from anything the agent says.
+func TestTheAgentsTokenRequestCarriesTheJSONAndFlavorHeadersAndNoResourceID(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{})
+
+	agent.waitUntilReady(t, cloud)
+
+	metadataRequests, _, _ := cloud.snapshot()
+	headers := metadataRequests[0].headers
+	if got := headers.Values("Accept"); len(got) != 1 || got[0] != "application/json" {
+		t.Errorf("metadata request Accept = %q, want exactly [application/json]", got)
+	}
+	if got := headers.Values("Metadata-Flavor"); len(got) != 1 || got[0] != "StrettchCloud" {
+		t.Errorf("metadata request Metadata-Flavor = %q, want exactly [StrettchCloud]", got)
+	}
+	if got := headers.Values("X-Resource-ID"); len(got) != 0 {
+		t.Errorf("metadata request X-Resource-ID = %q, want no such header", got)
 	}
 }
 
