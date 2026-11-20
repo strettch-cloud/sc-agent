@@ -43,11 +43,11 @@ if [ -z "$commits" ]; then
   exit 3
 fi
 
-bump="patch"
+MINOR_BUMP=false
 breaking=""
 while IFS= read -r sha; do
   subject=$(git log -1 --format=%s "$sha")
-  if printf '%s' "$subject" | grep -qE '^feat(\([^)]*\))?!?:'; then bump=minor; fi
+  if printf '%s' "$subject" | grep -qE '^feat(\([^)]*\))?!?:'; then MINOR_BUMP=true; fi
   if printf '%s' "$subject" | grep -qE '^[a-z]+(\([^)]*\))?!:' \
     || git log -1 --format=%b "$sha" | grep -qE '^[[:space:]]*BREAKING[ -]CHANGE:'; then
     breaking+="${subject} ($(git rev-parse --short "$sha"))"$'\n'
@@ -73,7 +73,7 @@ fi
 
 if [ "$MAJOR_BUMP" = true ]; then
   NEXT="$((MAJOR + 1)).0.0"
-elif [ "$bump" = minor ]; then
+elif [ "$MINOR_BUMP" = true ]; then
   NEXT="${MAJOR}.$((MINOR + 1)).0"
 else
   NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
