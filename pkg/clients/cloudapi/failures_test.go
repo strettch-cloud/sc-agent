@@ -88,7 +88,7 @@ func TestTheConsoleKeyClientAsksTheMetadataServiceUpTo10Times(t *testing.T) {
 		service, metadataClient := newMetadataService(t, newCloudAPI(t, consoleKeyAPI), attemptsBeforeGivingUp-1)
 		client := NewClient(metadataClient, time.Second, zap.NewNop())
 
-		key, err := client.FetchConsoleKey(context.Background(), "token")
+		key, err := client.FetchConsoleKey(context.Background())
 
 		if err != nil || key.PublicKey != "ssh-ed25519 AAAA console" {
 			t.Errorf("FetchConsoleKey = %+v, %v, want the console key", key, err)
@@ -100,7 +100,7 @@ func TestTheConsoleKeyClientAsksTheMetadataServiceUpTo10Times(t *testing.T) {
 
 	for name, request := range map[string]func(*Client, context.Context) error{
 		"the console key": func(client *Client, ctx context.Context) error {
-			_, err := client.FetchConsoleKey(ctx, "token")
+			_, err := client.FetchConsoleKey(ctx)
 			return err
 		},
 		"a heartbeat": func(client *Client, ctx context.Context) error { return client.SendHeartbeat(ctx, "token", "1.0.0") },
@@ -146,7 +146,7 @@ func TestAConsoleKeyResponseTheAgentCantUseIsAnError(t *testing.T) {
 			t.Parallel()
 			client := NewClient(newMetadataClient(t, newCloudAPI(t, testCase.respond), 0), time.Second, zap.NewNop())
 
-			_, err := client.FetchConsoleKey(context.Background(), "token")
+			_, err := client.FetchConsoleKey(context.Background())
 
 			assertErrorContains(t, err, testCase.want)
 		})
@@ -159,7 +159,7 @@ func TestAMalformedCloudAPIAddressFailsRequests(t *testing.T) {
 	t.Parallel()
 	client := NewClient(newMetadataClient(t, "http://[::1", 0), time.Second, zap.NewNop())
 
-	_, err := client.FetchConsoleKey(context.Background(), "token")
+	_, err := client.FetchConsoleKey(context.Background())
 	assertErrorContains(t, err, "failed to create request")
 	assertErrorContains(t, client.SendHeartbeat(context.Background(), "token", "1.0.0"), "failed to create request")
 }
@@ -171,4 +171,55 @@ func TestAHeartbeatToAnUnreachableCloudAPIFails(t *testing.T) {
 	client := NewClient(newMetadataClient(t, closed.URL, 0), time.Second, zap.NewNop())
 
 	assertErrorContains(t, client.SendHeartbeat(context.Background(), "token", "1.0.0"), "request failed")
+}
+
+// Console-key retries can outlast the token the first attempt used, so each
+// attempt sends the token the metadata service gives at that moment.
+func TestARetriedConsoleKeyRequestSendsTheRenewedToken(t *testing.T) {
+	t.Parallel()
+	// The metadata client keeps a token until a minute before it expires, so a
+	// token expiring in 62 s is renewed after about 2 s.
+	const firstTokenLifetime = 62 * time.Second
+	const timeTheFirstTokenIsKept = 2 * time.Second
+
+	var cloudAPIRequests atomic.Int32
+	var tokensSent []string
+	var tokensMutex sync.Mutex
+	cloudAPI := newCloudAPI(t, func(response http.ResponseWriter, request *http.Request) {
+		tokensMutex.Lock()
+		tokensSent = append(tokensSent, request.Header.Get(HeaderAuthorization))
+		tokensMutex.Unlock()
+		if cloudAPIRequests.Add(1) == 1 {
+			time.Sleep(timeTheFirstTokenIsKept + 200*time.Millisecond)
+			http.Error(response, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(response).Encode(ConsoleKeyResponse{Data: ConsoleKey{PublicKey: "ssh-ed25519 AAAA console"}})
+	})
+	var metadataAnswers atomic.Int32
+	metadataServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		answer := metadata.Response{CloudAPIUrl: cloudAPI, PublicKey: "knock-key"}
+		if metadataAnswers.Add(1) == 1 {
+			answer.Token = "first-token"
+			answer.ExpiresAt = time.Now().Add(firstTokenLifetime).UTC().Format(time.RFC3339)
+		} else {
+			answer.Token = "renewed-token"
+			answer.ExpiresAt = time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		}
+		_ = json.NewEncoder(response).Encode(answer)
+	}))
+	t.Cleanup(metadataServer.Close)
+	client := NewClient(metadata.NewClient(metadataServer.URL, 5*time.Second, zap.NewNop()), 5*time.Second, zap.NewNop())
+
+	key, err := client.FetchConsoleKeyWithRetry(context.Background(), 2)
+
+	if err != nil || key.PublicKey != "ssh-ed25519 AAAA console" {
+		t.Fatalf("FetchConsoleKeyWithRetry = %+v, %v, want the console key", key, err)
+	}
+	tokensMutex.Lock()
+	defer tokensMutex.Unlock()
+	want := []string{"Bearer first-token", "Bearer renewed-token"}
+	if strings.Join(tokensSent, ",") != strings.Join(want, ",") {
+		t.Errorf("the cloud API got tokens %q, want %q", tokensSent, want)
+	}
 }

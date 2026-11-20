@@ -224,7 +224,7 @@ func (p *Processor) processKnock(ctx context.Context, logger *zap.Logger) error 
 	}
 
 	// Fetch console key
-	consoleKey, err := p.cloudAPIClient.FetchConsoleKeyWithRetry(ctx, metadata.Token, p.config.MaxRetries)
+	consoleKey, err := p.cloudAPIClient.FetchConsoleKeyWithRetry(ctx, p.config.MaxRetries)
 	if err != nil {
 		return fmt.Errorf("failed to fetch console key: %w", err)
 	}

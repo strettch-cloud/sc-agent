@@ -131,7 +131,7 @@ func TestFetchConsoleKey(t *testing.T) {
 			// Create metadata server that returns the API URL
 			metaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				response := metadata.Response{
-					Token:       "meta-token",
+					Token:       tt.authToken,
 					CloudAPIUrl: server.URL,
 					PublicKey:   "knock-key",
 					ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
@@ -147,7 +147,7 @@ func TestFetchConsoleKey(t *testing.T) {
 			metaClient := metadata.NewClient(metaServer.URL, 10*time.Second, zap.NewNop())
 			client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
-			key, err := client.FetchConsoleKey(context.Background(), tt.authToken)
+			key, err := client.FetchConsoleKey(context.Background())
 
 			if tt.expectError {
 				if err == nil {
@@ -219,7 +219,7 @@ func TestFetchConsoleKeyWithRetry(t *testing.T) {
 	metaClient := metadata.NewClient(metaServer.URL, 1*time.Second, zap.NewNop())
 	client := NewClient(metaClient, 1*time.Second, zap.NewNop())
 
-	key, err := client.FetchConsoleKeyWithRetry(context.Background(), "test-token", 5)
+	key, err := client.FetchConsoleKeyWithRetry(context.Background(), 5)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := client.FetchConsoleKey(ctx, "test-token")
+	_, err := client.FetchConsoleKey(ctx)
 	if err == nil {
 		t.Error("Expected timeout error")
 	}
