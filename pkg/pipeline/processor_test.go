@@ -58,8 +58,8 @@ func TestNewProcessor(t *testing.T) {
 }
 
 func TestConstants(t *testing.T) {
-	if knockProcessTimeout != 30*time.Second {
-		t.Errorf("Expected knockProcessTimeout to be 30s, got %v", knockProcessTimeout)
+	if knockProcessTimeout != 2*time.Minute {
+		t.Errorf("Expected knockProcessTimeout to be 2m, got %v", knockProcessTimeout)
 	}
 }
 

@@ -14,6 +14,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -54,6 +55,10 @@ const (
 	// fakeDMIDecode prints resourceID, as a VM's firmware would. The image has
 	// no dmidecode of its own.
 	fakeDMIDecode = "#!/bin/sh\necho " + resourceID + "\n"
+
+	// tokenRetryDelay replaces the 10 s the agent waits between token
+	// attempts, so 10 attempts fit well inside waitForAgent.
+	tokenRetryDelay = 100 * time.Millisecond
 
 	waitForAgent = 20 * time.Second
 	pollEvery    = 100 * time.Millisecond
@@ -140,9 +145,15 @@ type fakeCloud struct {
 	token      string
 	knockKey   ed25519.PrivateKey
 	keyExpires time.Duration
+	// tokenLifetime is how long each token the metadata service hands out
+	// has left when it is handed out.
+	tokenLifetime time.Duration
 	// knockKeyHex is the knock key the metadata service hands out. Empty
 	// leaves it out of the response.
 	knockKeyHex string
+	// answersWithoutKnockKey answers that many token requests with a 200 that
+	// leaves out the knock key, before answering in full.
+	answersWithoutKnockKey int
 
 	// Failures a test stages. metadataFailures and keyFailures answer that
 	// many requests with 503 before working again; heartbeatStatus, when set,
@@ -155,6 +166,8 @@ type fakeCloud struct {
 	metadataRequests []recordedRequest
 	keyRequests      []recordedRequest
 	heartbeats       []recordedRequest
+	// otherPaths are the paths of requests the fake doesn't serve.
+	otherPaths []string
 }
 
 func newFakeCloud(t *testing.T) *fakeCloud {
@@ -163,7 +176,7 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cloud := &fakeCloud{token: "token-" + t.Name(), knockKey: knockKey, keyExpires: time.Hour,
+	cloud := &fakeCloud{token: "token-" + t.Name(), knockKey: knockKey, keyExpires: time.Hour, tokenLifetime: time.Hour,
 		knockKeyHex: hex.EncodeToString(knockKey.Public().(ed25519.PublicKey))}
 	cloud.server = httptest.NewServer(http.HandlerFunc(cloud.serve))
 	t.Cleanup(cloud.server.Close)
@@ -182,7 +195,7 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 	cloud.mutex.Lock()
 	defer cloud.mutex.Unlock()
 	switch {
-	case request.Method == http.MethodGet && request.URL.Path == "/metadata/v1/auth-token":
+	case request.Method == http.MethodGet && request.URL.Path == "/v1/token":
 		cloud.metadataRequests = append(cloud.metadataRequests, recorded)
 		// Like the metadata service at 169.254.169.254, refuse a request without the header.
 		if request.Header.Get("Metadata-Flavor") != "StrettchCloud" {
@@ -194,9 +207,15 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 			http.Error(response, "unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		metadata := map[string]string{"token": cloud.token, "cloudAPIUrl": cloud.server.URL}
-		if cloud.knockKeyHex != "" {
-			metadata["publicKey"] = cloud.knockKeyHex
+		metadata := map[string]string{
+			"token":      cloud.token,
+			"expires-at": time.Now().Add(cloud.tokenLifetime).UTC().Format(time.RFC3339),
+			"api-url":    cloud.server.URL,
+		}
+		if cloud.answersWithoutKnockKey > 0 {
+			cloud.answersWithoutKnockKey--
+		} else if cloud.knockKeyHex != "" {
+			metadata["console-public-key"] = cloud.knockKeyHex
 		}
 		writeJSON(response, metadata)
 	case request.Method == http.MethodGet && request.URL.Path == "/resource-manager/api/v1/console/public-key/agent":
@@ -222,6 +241,7 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 		}
 		writeJSON(response, map[string]string{})
 	default:
+		cloud.otherPaths = append(cloud.otherPaths, request.URL.Path)
 		http.NotFound(response, request)
 	}
 }
@@ -229,6 +249,12 @@ func (cloud *fakeCloud) serve(response http.ResponseWriter, request *http.Reques
 func writeJSON(response http.ResponseWriter, value any) {
 	response.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(response).Encode(value)
+}
+
+func (cloud *fakeCloud) unservedPaths() []string {
+	cloud.mutex.Lock()
+	defer cloud.mutex.Unlock()
+	return append([]string(nil), cloud.otherPaths...)
 }
 
 func (cloud *fakeCloud) snapshot() (metadataRequests, keyRequests, heartbeats []recordedRequest) {
@@ -313,6 +339,7 @@ func startAgent(t *testing.T, cloud *fakeCloud, options agentOptions) *agentCont
 		"--env", "SC_TEST_HTTP_TIMEOUT=2s",
 		"--env", "SC_TEST_MAX_RETRIES=1",
 		"--env", "SC_TEST_RETRY_INTERVAL=100ms",
+		"--env", "SC_TEST_TOKEN_RETRY_DELAY="+tokenRetryDelay.String(),
 		// What dpkg-query gives the agent on a VM.
 		"--env", "SC_TEST_AGENT_VERSION="+agentVersion,
 		// Release builds always use 169.254.169.254.
@@ -433,10 +460,19 @@ func (agent *agentContainer) waitUntilReady(t *testing.T, cloud *fakeCloud) {
 	}, "the agent sent no heartbeat")
 }
 
+// exitWaitLimit bounds exitCode, so an agent that never exits fails its own
+// test instead of holding the package until go test's own timeout.
+const exitWaitLimit = 2 * time.Minute
+
 // exitCode waits for the container to stop and returns the agent's exit code.
 func (agent *agentContainer) exitCode(t *testing.T) string {
 	t.Helper()
-	output, err := exec.Command("docker", "wait", agent.name).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), exitWaitLimit)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "docker", "wait", agent.name).CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("the agent was still running %s after it should have exited", exitWaitLimit)
+	}
 	if err != nil {
 		t.Fatalf("docker wait: %v\n%s", err, output)
 	}
@@ -451,8 +487,8 @@ func TestAgentSendsAHeartbeatWhenItStarts(t *testing.T) {
 	agent.waitUntilReady(t, cloud)
 
 	metadataRequests, _, heartbeats := cloud.snapshot()
-	if got := metadataRequests[0].query; got != "includePublicKey=True" {
-		t.Errorf("metadata request query = %q, want the knock key included", got)
+	if got := metadataRequests[0].query; got != "" {
+		t.Errorf("metadata request query = %q, want none", got)
 	}
 	if got, want := heartbeats[0].authorization, "Bearer "+cloud.token; got != want {
 		t.Errorf("heartbeat Authorization = %q, want %q", got, want)
