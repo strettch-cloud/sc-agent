@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/strettch-cloud/sc-agent/pkg/clients/metadata"
 	"github.com/strettch-cloud/sc-agent/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -49,7 +50,7 @@ func unavailableMetadataService() (http.HandlerFunc, *atomic.Int32) {
 	var requests atomic.Int32
 	return func(response http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
-		response.Header().Set("Retry-After", "0")
+		response.Header().Set(metadata.HeaderRetryAfter, "0")
 		http.Error(response, "unavailable", http.StatusServiceUnavailable)
 	}, &requests
 }

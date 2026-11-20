@@ -39,7 +39,7 @@ func newMetadataService(t *testing.T, cloudAPIURL string, failures int) (*fakeMe
 		service.requests++
 		if service.failures > 0 {
 			service.failures--
-			response.Header().Set("Retry-After", "0")
+			response.Header().Set(metadata.HeaderRetryAfter, "0")
 			http.Error(response, "unavailable", http.StatusServiceUnavailable)
 			return
 		}

@@ -14,6 +14,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
@@ -459,10 +460,19 @@ func (agent *agentContainer) waitUntilReady(t *testing.T, cloud *fakeCloud) {
 	}, "the agent sent no heartbeat")
 }
 
+// exitWaitLimit bounds exitCode, so an agent that never exits fails its own
+// test instead of holding the package until go test's own timeout.
+const exitWaitLimit = 2 * time.Minute
+
 // exitCode waits for the container to stop and returns the agent's exit code.
 func (agent *agentContainer) exitCode(t *testing.T) string {
 	t.Helper()
-	output, err := exec.Command("docker", "wait", agent.name).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), exitWaitLimit)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "docker", "wait", agent.name).CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("the agent was still running %s after it should have exited", exitWaitLimit)
+	}
 	if err != nil {
 		t.Fatalf("docker wait: %v\n%s", err, output)
 	}

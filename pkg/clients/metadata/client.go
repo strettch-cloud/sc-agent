@@ -19,6 +19,9 @@ const (
 	HeaderAccept = "Accept"
 	AcceptJSON   = "application/json"
 
+	// How long the metadata service asks the agent to wait before asking again.
+	HeaderRetryAfter = "Retry-After"
+
 	// The metadata service at 169.254.169.254 refuses a request without this header.
 	HeaderMetadataFlavor = "Metadata-Flavor"
 	MetadataFlavor       = "StrettchCloud"
@@ -155,7 +158,7 @@ func (c *Client) fetchMetadata(ctx context.Context) (info *Info, retryAfter time
 		return nil, -1, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), c.now())
+	retryAfter = parseRetryAfter(resp.Header.Get(HeaderRetryAfter), c.now())
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

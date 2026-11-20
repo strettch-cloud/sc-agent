@@ -95,7 +95,7 @@ func newTokenService(t *testing.T, answers ...tokenServiceAnswer) (*tokenService
 			service.answers = service.answers[1:]
 		}
 		if answer.retryAfter != "" {
-			response.Header().Set("Retry-After", answer.retryAfter)
+			response.Header().Set(HeaderRetryAfter, answer.retryAfter)
 		}
 		response.WriteHeader(answer.status)
 		_, _ = response.Write([]byte(answer.body))
