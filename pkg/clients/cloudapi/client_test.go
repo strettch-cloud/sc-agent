@@ -16,18 +16,13 @@ import (
 func TestNewClient(t *testing.T) {
 	// Create a simple metadata client
 	metaClient := metadata.NewClient("http://example.com", 10*time.Second, zap.NewNop())
-	resourceID := "test-resource-123"
 	timeout := 30 * time.Second
 	logger := zap.NewNop()
 
-	client := NewClient(metaClient, resourceID, timeout, logger)
+	client := NewClient(metaClient, timeout, logger)
 
 	if client == nil {
 		t.Fatal("Expected non-nil client")
-	}
-
-	if client.resourceID != resourceID {
-		t.Errorf("Expected resource ID %s, got %s", resourceID, client.resourceID)
 	}
 
 	if client.logger != logger {
@@ -136,8 +131,10 @@ func TestFetchConsoleKey(t *testing.T) {
 			// Create metadata server that returns the API URL
 			metaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				response := metadata.Response{
-					Token:       "meta-token",
+					Token:       tt.authToken,
 					CloudAPIUrl: server.URL,
+					PublicKey:   "knock-key",
+					ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 				}
 				w.Header().Set("Content-Type", "application/json")
 				if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -148,9 +145,9 @@ func TestFetchConsoleKey(t *testing.T) {
 			defer metaServer.Close()
 
 			metaClient := metadata.NewClient(metaServer.URL, 10*time.Second, zap.NewNop())
-			client := NewClient(metaClient, "test-resource", 10*time.Second, zap.NewNop())
+			client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
-			key, err := client.FetchConsoleKey(context.Background(), tt.authToken)
+			key, err := client.FetchConsoleKey(context.Background())
 
 			if tt.expectError {
 				if err == nil {
@@ -208,6 +205,8 @@ func TestFetchConsoleKeyWithRetry(t *testing.T) {
 		response := metadata.Response{
 			Token:       "meta-token",
 			CloudAPIUrl: server.URL,
+			PublicKey:   "knock-key",
+			ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -218,9 +217,9 @@ func TestFetchConsoleKeyWithRetry(t *testing.T) {
 	defer metaServer.Close()
 
 	metaClient := metadata.NewClient(metaServer.URL, 1*time.Second, zap.NewNop())
-	client := NewClient(metaClient, "test-resource", 1*time.Second, zap.NewNop())
+	client := NewClient(metaClient, 1*time.Second, zap.NewNop())
 
-	key, err := client.FetchConsoleKeyWithRetry(context.Background(), "test-token", 5)
+	key, err := client.FetchConsoleKeyWithRetry(context.Background(), 5)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -256,6 +255,8 @@ func TestContextCancellation(t *testing.T) {
 		response := metadata.Response{
 			Token:       "meta-token",
 			CloudAPIUrl: server.URL,
+			PublicKey:   "knock-key",
+			ExpiresAt:   time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -266,12 +267,12 @@ func TestContextCancellation(t *testing.T) {
 	defer metaServer.Close()
 
 	metaClient := metadata.NewClient(metaServer.URL, 10*time.Second, zap.NewNop())
-	client := NewClient(metaClient, "test-resource", 10*time.Second, zap.NewNop())
+	client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := client.FetchConsoleKey(ctx, "test-token")
+	_, err := client.FetchConsoleKey(ctx)
 	if err == nil {
 		t.Error("Expected timeout error")
 	}
@@ -283,7 +284,7 @@ func TestContextCancellation(t *testing.T) {
 
 func TestClose(t *testing.T) {
 	metaClient := metadata.NewClient("http://example.com", 10*time.Second, zap.NewNop())
-	client := NewClient(metaClient, "test-resource", 10*time.Second, zap.NewNop())
+	client := NewClient(metaClient, 10*time.Second, zap.NewNop())
 
 	// This should not panic
 	client.Close()
