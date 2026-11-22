@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// attemptsBeforeGivingUp is how many times in a row the agent asks /v1/token
+// before a startup or a knock fails.
+const attemptsBeforeGivingUp = 10
+
 // These tests break what the agent depends on: the metadata service down or
 // wrong, the cloud API failing, an authorized_keys it can't replace, its knock
 // port taken. For each, the agent must either keep running and recover, or
@@ -41,9 +45,98 @@ func TestTheAgentWaitsForTheMetadataServiceWhenItStarts(t *testing.T) {
 
 	agent.waitUntilReady(t, cloud)
 
-	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) < 3 {
-		t.Errorf("the agent made %d metadata requests, want at least 3: two that failed, then one that worked", len(metadataRequests))
+	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) != 3 {
+		t.Errorf("the agent made %d metadata requests, want 3: two that failed, then one that worked", len(metadataRequests))
 	}
+}
+
+// An answer without the knock key is a failed attempt, like a 503: at startup
+// the agent asks again until an answer brings all three values.
+func TestTheAgentKeepsAskingWhenTheTokenAnswerHasNoKnockKey(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	answersWithoutKey := 2
+	cloud.answersWithoutKnockKey = answersWithoutKey
+	agent := startAgent(t, cloud, agentOptions{})
+
+	agent.waitUntilReady(t, cloud)
+
+	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) < answersWithoutKey+1 {
+		t.Errorf("the agent made %d token requests, want at least %d: %d without the knock key, then one complete",
+			len(metadataRequests), answersWithoutKey+1, answersWithoutKey)
+	}
+	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
+	eventually(t, func() bool { return strings.Contains(agent.authorizedKeys(t), consoleKey) },
+		"a knock signed with the knock key from the complete answer installed no console key")
+}
+
+// At startup the agent asks /v1/token, and only it, 10 times in a row, then
+// exits with an error so that systemd starts it again.
+func TestTheAgentExitsAfter10FailedTokenAttemptsAtStartup(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	cloud.metadataFailures = 1000
+	agent := startAgent(t, cloud, agentOptions{})
+
+	agent.assertExitedWith1Saying(t, "failed to fetch metadata")
+
+	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) != attemptsBeforeGivingUp {
+		t.Errorf("the agent asked /v1/token %d times, want %d", len(metadataRequests), attemptsBeforeGivingUp)
+	}
+	if paths := cloud.unservedPaths(); len(paths) != 0 {
+		t.Errorf("the agent also asked %q, want only /v1/token", paths)
+	}
+}
+
+// The values fetched at startup are held, so a knock right after needs no
+// new token request.
+func TestAKnockUsesTheValuesHeldSinceStartup(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	agent := startAgent(t, cloud, agentOptions{})
+	agent.waitUntilReady(t, cloud)
+
+	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
+
+	eventually(t, func() bool { return strings.Contains(agent.authorizedKeys(t), consoleKey) },
+		"the knock never installed the console key")
+	if metadataRequests, _, _ := cloud.snapshot(); len(metadataRequests) != 1 {
+		t.Errorf("the agent asked /v1/token %d times, want 1: the startup's values should still be held", len(metadataRequests))
+	}
+}
+
+// A token with 62 s left is held for at most 2 s, so a knock after that asks
+// the metadata service again. When that fails 10 times in a row the knock
+// installs no key, and the agent keeps running and serves the next knock.
+func TestAKnockWhoseTokenFetchFails10TimesInARowInstallsNoKey(t *testing.T) {
+	t.Parallel()
+	cloud := newFakeCloud(t)
+	cloud.tokenLifetime = 62 * time.Second
+	agent := startAgent(t, cloud, agentOptions{})
+	agent.addCustomerKey(t)
+	agent.waitUntilReady(t, cloud)
+	time.Sleep(3 * time.Second)
+	cloud.mutex.Lock()
+	cloud.metadataFailures = 1000
+	requestsBefore := len(cloud.metadataRequests)
+	cloud.mutex.Unlock()
+
+	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
+	agent.waitForLog(t, "Failed to process knock")
+
+	if got := agent.authorizedKeys(t); got != customerKey {
+		t.Errorf("after a knock whose token fetch failed, authorized_keys holds:\n%s\nwant only the customer's key", got)
+	}
+	if metadataRequests, keyRequests, _ := cloud.snapshot(); len(metadataRequests)-requestsBefore != attemptsBeforeGivingUp || len(keyRequests) != 0 {
+		t.Errorf("the knock asked /v1/token %d times and the console key API %d times, want %d and none",
+			len(metadataRequests)-requestsBefore, len(keyRequests), attemptsBeforeGivingUp)
+	}
+	cloud.mutex.Lock()
+	cloud.metadataFailures = 0
+	cloud.mutex.Unlock()
+	agent.sendKnock(t, knock(cloud.knockKey, resourceID, time.Now()))
+	eventually(t, func() bool { return strings.Contains(agent.authorizedKeys(t), consoleKey) },
+		"the knock after the failed one never installed the console key")
 }
 
 // Without a key to check knocks against, the agent could never let the
@@ -51,7 +144,6 @@ func TestTheAgentWaitsForTheMetadataServiceWhenItStarts(t *testing.T) {
 func TestTheAgentExitsWithoutAUsableKnockKey(t *testing.T) {
 	t.Parallel()
 	for name, testCase := range map[string]struct{ knockKeyHex, logged string }{
-		"no key":               {"", "metadata service did not provide public key"},
 		"a key that isn't hex": {"not-a-key", "failed to set public key"},
 	} {
 		t.Run(name, func(t *testing.T) {
