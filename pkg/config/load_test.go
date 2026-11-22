@@ -68,7 +68,7 @@ func TestLoadIgnoresTheVariablesThatUsedToChangeSettings(t *testing.T) {
 
 	cfg := mustLoad(t)
 
-	if want := "http://169.254.169.254/metadata/v1/auth-token"; cfg.MetadataServiceEndpoint != want {
+	if want := "http://169.254.169.254/v1/token"; cfg.MetadataServiceEndpoint != want {
 		t.Errorf("metadata endpoint = %q, want %q", cfg.MetadataServiceEndpoint, want)
 	}
 	if cfg.AgentVersion == "9.9.9" {
@@ -161,8 +161,8 @@ func TestValidateAcceptsTheExampleConfig(t *testing.T) {
 func TestTheMetadataAddressIsFixed(t *testing.T) {
 	useConfigFiles(t, installersConfig)
 
-	if cfg := mustLoad(t); cfg.MetadataServiceEndpoint != "http://169.254.169.254/metadata/v1/auth-token" {
-		t.Errorf("metadata endpoint = %q, want http://169.254.169.254/metadata/v1/auth-token", cfg.MetadataServiceEndpoint)
+	if cfg := mustLoad(t); cfg.MetadataServiceEndpoint != "http://169.254.169.254/v1/token" {
+		t.Errorf("metadata endpoint = %q, want http://169.254.169.254/v1/token", cfg.MetadataServiceEndpoint)
 	}
 }
 

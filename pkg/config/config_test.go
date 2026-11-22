@@ -14,7 +14,7 @@ func TestDefaultConfig(t *testing.T) {
 
 	cfg := DefaultConfig()
 
-	if want := "http://169.254.169.254/metadata/v1/auth-token"; cfg.MetadataServiceEndpoint != want {
+	if want := "http://169.254.169.254/v1/token"; cfg.MetadataServiceEndpoint != want {
 		t.Errorf("MetadataServiceEndpoint = %q, want %q", cfg.MetadataServiceEndpoint, want)
 	}
 	want := ConsoleConfig{UDPKnockPort: 60124, MaxPacketSize: 1024, SignatureTimeout: 30}
