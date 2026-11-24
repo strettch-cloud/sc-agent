@@ -83,8 +83,8 @@ package also lists its repository in `/etc/update-manager/release-upgrades.d/sc-
 which lets the upgrade keep a source in the newer `.sources` format switched on.
 
 To stop updates for good, remove the agent's source from `/etc/apt/sources.list.d/`
-(`sc-console-agent.list` or `sc-console-agent.sources`, and `sc-console-agent.list.disabled` if an Ubuntu upgrade
-left one). A source you removed is never put back.
+(`sc-console-agent.list` or `sc-console-agent.sources`, and `sc-console-agent.list.disabled` or
+`sc-console-agent.list.distUpgrade` if an Ubuntu upgrade left one). A source you removed is never put back.
 
 Remove it with `sudo apt-get purge sc-console-agent`.
 
